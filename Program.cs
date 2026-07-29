@@ -140,9 +140,9 @@ namespace FocusTimer
             string label = mode == TimerMode.Countdown ? "剩余时间" : "已专注";
             DrawLabel(g, label, 10F, FontStyle.Regular, Colors.Secondary, new Rectangle(90, 221, 540, 28), StringAlignment.Center);
             string time = mode == TimerMode.Countdown ? FormatCountdown(RemainingMilliseconds) : FormatStopwatch(CurrentElapsedMilliseconds);
-            float size = time.Length > 8 ? 48F : 62F;
-            DrawLabel(g, time, size, FontStyle.Regular, Colors.Text, new Rectangle(82, 255, 556, 105), StringAlignment.Center);
-            DrawLabel(g, StatusText(), 9.5F, FontStyle.Regular, state == TimerState.Finished ? Colors.Danger : Colors.Secondary, new Rectangle(90, 359, 540, 27), StringAlignment.Center);
+            var timeBounds = new Rectangle(76, 246, 568, 106);
+            DrawFittedTime(g, time, timeBounds);
+            DrawLabel(g, StatusText(), 9.5F, FontStyle.Regular, state == TimerState.Finished ? Colors.Danger : Colors.Secondary, new Rectangle(90, 365, 540, 27), StringAlignment.Center);
 
             if (mode == TimerMode.Countdown)
             {
@@ -297,6 +297,35 @@ namespace FocusTimer
         private static string FormatStopwatch(long milliseconds)
         {
             return string.Format("{0:00}:{1:00}.{2:00}", milliseconds / 60000, milliseconds % 60000 / 1000, milliseconds % 1000 / 10);
+        }
+
+        private static void DrawFittedTime(Graphics g, string value, Rectangle bounds)
+        {
+            const float maximumSize = 64F;
+            const float minimumSize = 20F;
+            const float step = 1F;
+            using (var format = new StringFormat(StringFormat.GenericTypographic)
+            {
+                Alignment = StringAlignment.Center,
+                LineAlignment = StringAlignment.Center,
+                FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces
+            })
+            using (var brush = new SolidBrush(Colors.Text))
+            {
+                for (float size = maximumSize; size >= minimumSize; size -= step)
+                {
+                    using (var font = new Font("Microsoft YaHei UI", size, FontStyle.Regular, GraphicsUnit.Point))
+                    {
+                        SizeF measured = g.MeasureString(value, font, int.MaxValue, format);
+                        if (measured.Width > bounds.Width - 24 || measured.Height > bounds.Height - 16) continue;
+                        g.DrawString(value, font, brush, bounds, format);
+                        return;
+                    }
+                }
+
+                using (var fallback = new Font("Microsoft YaHei UI", minimumSize, FontStyle.Regular, GraphicsUnit.Point))
+                    g.DrawString(value, fallback, brush, bounds, format);
+            }
         }
 
         private static void CircleIcon(Graphics g, Rectangle bounds, Color background, string value, Color foreground, float size)
