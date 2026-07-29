@@ -13,8 +13,9 @@ struct SummaryCard: View {
                 .foregroundStyle(tint)
             Text(value)
                 .font(.title2.monospacedDigit().weight(.bold))
+                .contentTransition(.numericText())
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.65)
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -36,17 +37,31 @@ struct UsageBar: View {
             HStack {
                 Text(title).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Text(detail ?? value.percentString).font(.caption.monospacedDigit().weight(.semibold))
+                Text(detail ?? value.percentString)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .contentTransition(.numericText())
             }
             ProgressView(value: min(max(value, 0), 100), total: 100)
                 .tint(value >= 90 ? .red : value >= 75 ? .orange : tint)
+                .animation(.easeInOut(duration: 0.3), value: value)
         }
+    }
+}
+
+struct StatusBadge: View {
+    let state: NodeHealthState
+
+    var body: some View {
+        Label(state.label, systemImage: "circle.fill")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(state.color)
     }
 }
 
 struct NodeCard: View {
     let node: KomariNode
     let status: NodeStatus?
+    let ping: NodePingSummary?
 
     private var memoryPercent: Double {
         guard let used = status?.ram, let total = status?.ramTotal ?? node.memTotal, total > 0 else { return 0 }
@@ -68,14 +83,19 @@ struct NodeCard: View {
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                Label(status?.online == true ? "在线" : "离线", systemImage: "circle.fill")
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(status?.online == true ? .green : .red)
+                VStack(alignment: .trailing, spacing: 3) {
+                    StatusBadge(state: status?.healthState ?? .unknown)
+                    if let ping {
+                        Text("\(Int(ping.latency.rounded())) ms")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(latencyColor(ping.latency))
+                    }
+                }
             }
             UsageBar(title: "CPU", value: status?.cpu ?? 0, detail: status?.cpu?.percentString)
             UsageBar(title: "内存", value: memoryPercent, detail: memoryPercent.percentString, tint: .indigo)
             UsageBar(title: "磁盘", value: diskPercent, detail: diskPercent.percentString, tint: .purple)
+
             HStack {
                 Label((status?.netIn ?? 0).rateString, systemImage: "arrow.down")
                 Spacer()
@@ -83,8 +103,30 @@ struct NodeCard: View {
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(.secondary)
+
+            trafficView
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var trafficView: some View {
+        if let used = node.trafficUsed(status: status), let limit = node.trafficLimit, limit > 0,
+           let percent = node.trafficPercent(status: status) {
+            UsageBar(title: "累计流量", value: percent, detail: "\(used.byteString) / \(limit.byteString)", tint: .blue)
+        } else if let status {
+            HStack {
+                Text("累计流量").foregroundStyle(.secondary)
+                Spacer()
+                Text("↑ \((status.netTotalUp ?? 0).byteString)  ↓ \((status.netTotalDown ?? 0).byteString)")
+                    .monospacedDigit()
+            }
+            .font(.caption)
+        }
+    }
+
+    private func latencyColor(_ latency: Double) -> Color {
+        latency >= 200 ? .red : latency >= 80 ? .orange : .green
     }
 }

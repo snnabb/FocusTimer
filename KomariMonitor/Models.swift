@@ -15,6 +15,7 @@ struct PanelConfiguration: Codable, Equatable, Sendable {
         return components.url
     }
 }
+
 struct KomariVersion: Codable, Sendable {
     let version: String
     let hash: String
@@ -131,11 +132,84 @@ struct NodeStatus: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+struct RecentStatusResponse: Codable, Sendable {
+    let count: Int?
+    let records: [NodeStatus]
+}
+
 struct RecordsResponse: Codable, Sendable {
     let count: Int?
     let records: [NodeStatus]
     let from: String?
     let to: String?
+}
+
+struct PingTask: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    let name: String
+    let clients: [String]?
+    let defaultOn: Bool?
+    let type: String?
+    let interval: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, clients, type, interval
+        case defaultOn = "default_on"
+    }
+}
+
+struct PingRecord: Codable, Identifiable, Hashable, Sendable {
+    let taskID: Int?
+    let time: String
+    let value: Double
+    let client: String?
+
+    var id: String { "\(client ?? "")-\(taskID ?? -1)-\(time)" }
+
+    enum CodingKeys: String, CodingKey {
+        case time, value, client
+        case taskID = "task_id"
+    }
+}
+
+struct PingClientStats: Codable, Sendable {
+    let client: String
+    let loss: Double?
+    let min: Double?
+    let max: Double?
+}
+
+struct PingTaskStats: Codable, Identifiable, Sendable {
+    let id: Int
+    let name: String
+    let type: String?
+    let interval: Int?
+    let defaultOn: Bool?
+    let clients: [String]?
+    let loss: Double?
+    let min: Double?
+    let max: Double?
+    let avg: Double?
+    let total: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, type, interval, clients, loss, min, max, avg, total
+        case defaultOn = "default_on"
+    }
+}
+
+struct PingRecordsResponse: Codable, Sendable {
+    let count: Int?
+    let basicInfo: [PingClientStats]?
+    let records: [PingRecord]
+    let tasks: [PingTaskStats]?
+    let from: String?
+    let to: String?
+
+    enum CodingKeys: String, CodingKey {
+        case count, records, tasks, from, to
+        case basicInfo = "basic_info"
+    }
 }
 
 struct MonitorSnapshot: Codable, Sendable {

@@ -92,7 +92,7 @@ actor KomariAPIClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("KomariMonitor/1.0 iOS", forHTTPHeaderField: "User-Agent")
+        request.setValue("KomariMonitor/1.1 iOS", forHTTPHeaderField: "User-Agent")
         request.httpBody = try JSONEncoder().encode(RPCRequest(method: method, params: params, id: requestID))
 
         let (data, response) = try await session.data(for: request)
