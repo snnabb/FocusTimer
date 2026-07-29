@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Media;
 using System.Windows.Forms;
 
@@ -20,178 +21,124 @@ namespace FocusTimer
 
     internal sealed class TimerForm : Form
     {
-        private static readonly Color GoogleBlue = Color.FromArgb(26, 115, 232);
-        private static readonly Color GoogleRed = Color.FromArgb(217, 48, 37);
-        private static readonly Color PrimaryText = Color.FromArgb(32, 33, 36);
-        private static readonly Color Muted = Color.FromArgb(95, 99, 104);
-        private static readonly Color Border = Color.FromArgb(218, 220, 224);
-        private static readonly Font Ui = new Font("Segoe UI", 10F);
-        private readonly Label modeLabel;
-        private readonly Label timeLabel;
-        private readonly Label durationLabel;
-        private readonly NumericUpDown minutesInput;
-        private readonly NumericUpDown secondsInput;
-        private readonly Label minutesLabel;
-        private readonly Label secondsLabel;
+        private static readonly Color Background = Color.FromArgb(48, 45, 39);
+        private static readonly Color Accent = Color.FromArgb(251, 188, 75);
+        private static readonly Color AccentDark = Color.FromArgb(143, 101, 3);
+        private static readonly Color Ring = Color.FromArgb(83, 70, 43);
+        private static readonly Color TimeText = Color.FromArgb(255, 241, 223);
         private readonly Button countdownButton;
         private readonly Button stopwatchButton;
         private readonly Button startPauseButton;
         private readonly Button resetButton;
+        private readonly Button soundButton;
         private readonly CheckBox topMostCheckBox;
+        private readonly CircularTimerDisplay display;
         private readonly Timer tickTimer;
         private TimerMode mode = TimerMode.Countdown;
-        private int displayedSeconds = 25 * 60;
         private bool isRunning;
+        private bool soundEnabled = true;
+        private long elapsedCentiseconds;
+        private long countdownCentiseconds = 5 * 60 * 100;
         private DateTime runStartedAt;
 
         public TimerForm()
         {
             base.Text = "计时器";
-            ClientSize = new Size(600, 480);
-            MinimumSize = new Size(616, 519);
-            BackColor = Color.White;
-            ForeColor = PrimaryText;
-            Font = Ui;
+            ClientSize = new Size(960, 650);
+            MinimumSize = new Size(976, 689);
+            BackColor = Background;
+            Font = new Font("Microsoft YaHei UI", 10F);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
 
-            var title = new Label
+            countdownButton = CreateModeButton("⌛  定时器", new Point(18, 10));
+            countdownButton.Click += delegate { SelectMode(TimerMode.Countdown); };
+            stopwatchButton = CreateModeButton("◷  秒表", new Point(145, 10));
+            stopwatchButton.Click += delegate { SelectMode(TimerMode.Stopwatch); };
+
+            soundButton = CreateIconButton("🔊", new Point(835, 13), new Size(44, 42));
+            soundButton.Click += delegate
             {
-                Text = "计时器",
-                Font = new Font("Segoe UI", 20F),
-                ForeColor = PrimaryText,
-                Location = new Point(40, 27),
-                AutoSize = true
+                soundEnabled = !soundEnabled;
+                soundButton.Text = soundEnabled ? "🔊" : "🔇";
             };
             topMostCheckBox = new CheckBox
             {
                 Text = "窗口置顶",
-                ForeColor = Muted,
-                BackColor = Color.White,
-                Location = new Point(472, 35),
-                AutoSize = true
+                Location = new Point(881, 24),
+                Size = new Size(70, 24),
+                ForeColor = Accent,
+                BackColor = Background,
+                Font = new Font("Microsoft YaHei UI", 8.5F),
+                TextAlign = ContentAlignment.MiddleRight
             };
             topMostCheckBox.CheckedChanged += delegate { TopMost = topMostCheckBox.Checked; };
 
-            countdownButton = CreateTabButton("倒计时", new Point(40, 82));
-            countdownButton.Click += delegate { SelectMode(TimerMode.Countdown); };
-            stopwatchButton = CreateTabButton("正计时", new Point(154, 82));
-            stopwatchButton.Click += delegate { SelectMode(TimerMode.Stopwatch); };
-
-            var card = new Panel
+            display = new CircularTimerDisplay
             {
-                Location = new Point(40, 132),
-                Size = new Size(520, 298),
-                BackColor = Color.White,
-                BorderStyle = BorderStyle.FixedSingle
+                Location = new Point(246, 96),
+                Size = new Size(468, 468),
+                BackColor = Background,
+                ForeColor = TimeText
             };
 
-            modeLabel = new Label
-            {
-                Font = new Font("Segoe UI", 11F),
-                ForeColor = Muted,
-                Location = new Point(18, 22),
-                Size = new Size(482, 25),
-                TextAlign = ContentAlignment.MiddleCenter
-            };
-            timeLabel = new Label
-            {
-                Font = new Font("Segoe UI", 64F),
-                ForeColor = PrimaryText,
-                Location = new Point(12, 44),
-                Size = new Size(494, 111),
-                TextAlign = ContentAlignment.MiddleCenter,
-                UseCompatibleTextRendering = false
-            };
-
-            durationLabel = new Label
-            {
-                Text = "设置倒计时时长",
-                ForeColor = Muted,
-                Location = new Point(116, 175),
-                AutoSize = true
-            };
-            minutesInput = CreateNumberInput(25, 0, 999, new Point(254, 166));
-            minutesLabel = CreateCaption("分", new Point(330, 177));
-            secondsInput = CreateNumberInput(0, 0, 59, new Point(360, 166));
-            secondsLabel = CreateCaption("秒", new Point(436, 177));
-            minutesInput.ValueChanged += delegate { PreviewCountdown(); };
-            secondsInput.ValueChanged += delegate { PreviewCountdown(); };
-
-            startPauseButton = CreateActionButton("开始", GoogleBlue, Color.White, new Point(161, 222), new Size(96, 44));
+            startPauseButton = CreateBottomButton("▶", new Point(3, 566), new Size(466, 66));
+            display.DoubleClick += delegate { ConfigureCountdown(); };
             startPauseButton.Click += StartPauseButton_Click;
-            resetButton = CreateActionButton("重置", Color.White, GoogleBlue, new Point(271, 222), new Size(96, 44));
-            resetButton.FlatAppearance.BorderColor = Border;
+            resetButton = CreateBottomButton("↻", new Point(477, 566), new Size(466, 66));
             resetButton.Click += delegate { ResetTimer(); };
 
-            card.Controls.AddRange(new Control[]
-            {
-                modeLabel, timeLabel, durationLabel, minutesInput, minutesLabel, secondsInput, secondsLabel,
-                startPauseButton, resetButton
-            });
-
-            var hint = new Label
-            {
-                Text = "点击模式切换计时方式。倒计时结束会播放系统提示音。",
-                ForeColor = Muted,
-                Location = new Point(40, 447),
-                AutoSize = true
-            };
-
-            tickTimer = new Timer { Interval = 100 };
+            tickTimer = new Timer { Interval = 15 };
             tickTimer.Tick += TickTimer_Tick;
-            Controls.AddRange(new Control[] { title, topMostCheckBox, countdownButton, stopwatchButton, card, hint });
+            Controls.AddRange(new Control[] { countdownButton, stopwatchButton, soundButton, topMostCheckBox, display, startPauseButton, resetButton });
             SelectMode(TimerMode.Countdown);
         }
 
-        private Button CreateTabButton(string text, Point location)
+        private Button CreateModeButton(string text, Point location)
         {
             return new Button
             {
                 Text = text,
                 Location = location,
-                Size = new Size(100, 36),
+                Size = new Size(116, 49),
                 FlatStyle = FlatStyle.Flat,
                 FlatAppearance = { BorderSize = 0 },
-                Font = new Font("Segoe UI", 10F),
+                ForeColor = Accent,
+                BackColor = Background,
+                Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold),
                 Cursor = Cursors.Hand
             };
         }
 
-        private NumericUpDown CreateNumberInput(decimal value, decimal minimum, decimal maximum, Point location)
-        {
-            return new NumericUpDown
-            {
-                Value = value,
-                Minimum = minimum,
-                Maximum = maximum,
-                Location = location,
-                Size = new Size(70, 31),
-                Font = new Font("Segoe UI", 12F),
-                TextAlign = HorizontalAlignment.Center,
-                BackColor = Color.White,
-                ForeColor = PrimaryText
-            };
-        }
-
-        private Label CreateCaption(string text, Point location)
-        {
-            return new Label { Text = text, ForeColor = Muted, Location = location, AutoSize = true };
-        }
-
-        private Button CreateActionButton(string text, Color backColor, Color foreColor, Point location, Size size)
+        private Button CreateIconButton(string text, Point location, Size size)
         {
             return new Button
             {
                 Text = text,
                 Location = location,
                 Size = size,
-                BackColor = backColor,
-                ForeColor = foreColor,
                 FlatStyle = FlatStyle.Flat,
-                FlatAppearance = { BorderSize = 1 },
-                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                FlatAppearance = { BorderSize = 0 },
+                ForeColor = Accent,
+                BackColor = Background,
+                Font = new Font("Segoe UI Symbol", 16F),
+                Cursor = Cursors.Hand
+            };
+        }
+
+        private Button CreateBottomButton(string text, Point location, Size size)
+        {
+            return new Button
+            {
+                Text = text,
+                Location = location,
+                Size = size,
+                FlatStyle = FlatStyle.Flat,
+                FlatAppearance = { BorderSize = 0 },
+                BackColor = AccentDark,
+                ForeColor = TimeText,
+                Font = new Font("Segoe UI Symbol", 21F, FontStyle.Bold),
                 Cursor = Cursors.Hand
             };
         }
@@ -201,106 +148,174 @@ namespace FocusTimer
             tickTimer.Stop();
             isRunning = false;
             mode = newMode;
-            bool countdown = mode == TimerMode.Countdown;
-            countdownButton.BackColor = countdown ? Color.FromArgb(232, 240, 254) : Color.White;
-            countdownButton.ForeColor = countdown ? GoogleBlue : Muted;
-            stopwatchButton.BackColor = countdown ? Color.White : Color.FromArgb(232, 240, 254);
-            stopwatchButton.ForeColor = countdown ? Muted : GoogleBlue;
-            durationLabel.Visible = countdown;
-            minutesInput.Visible = countdown;
-            minutesLabel.Visible = countdown;
-            secondsInput.Visible = countdown;
-            secondsLabel.Visible = countdown;
-            minutesInput.Enabled = countdown;
-            secondsInput.Enabled = countdown;
-            modeLabel.Text = countdown ? "倒计时" : "正计时";
-            displayedSeconds = countdown ? GetInputSeconds() : 0;
-            startPauseButton.Text = "开始";
-            startPauseButton.BackColor = GoogleBlue;
-            UpdateTimeDisplay();
+            elapsedCentiseconds = 0;
+            bool stopwatch = mode == TimerMode.Stopwatch;
+            countdownButton.BackColor = stopwatch ? Background : AccentDark;
+            stopwatchButton.BackColor = stopwatch ? AccentDark : Background;
+            countdownButton.Text = stopwatch ? "⌛  定时器" : "✓  定时器";
+            stopwatchButton.Text = stopwatch ? "✓  秒表" : "◷  秒表";
+            startPauseButton.Text = "▶";
+            RefreshDisplay();
         }
 
         private void StartPauseButton_Click(object? sender, EventArgs e)
         {
-            if (isRunning) { PauseTimer(); return; }
-            if (mode == TimerMode.Countdown && displayedSeconds == 0) displayedSeconds = GetInputSeconds();
-            if (mode == TimerMode.Countdown && displayedSeconds == 0)
+            if (isRunning)
             {
-                MessageBox.Show("请设置大于 0 的倒计时时长。", "计时器", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                PauseTimer();
                 return;
             }
+
+            if (mode == TimerMode.Countdown && countdownCentiseconds == 0)
+            {
+                MessageBox.Show("倒计时时长不能为 0。", "计时器", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             isRunning = true;
             runStartedAt = DateTime.UtcNow;
             tickTimer.Start();
-            startPauseButton.Text = "暂停";
-            startPauseButton.BackColor = GoogleRed;
-            minutesInput.Enabled = false;
-            secondsInput.Enabled = false;
+            startPauseButton.Text = "Ⅱ";
         }
 
         private void PauseTimer()
         {
-            UpdateRunningTime();
+            UpdateElapsedTime();
             isRunning = false;
             tickTimer.Stop();
-            startPauseButton.Text = "继续";
-            startPauseButton.BackColor = GoogleBlue;
-            minutesInput.Enabled = mode == TimerMode.Countdown;
-            secondsInput.Enabled = mode == TimerMode.Countdown;
+            startPauseButton.Text = "▶";
         }
 
         private void TickTimer_Tick(object? sender, EventArgs e)
         {
-            UpdateRunningTime();
-            if (mode != TimerMode.Countdown || displayedSeconds > 0) return;
+            UpdateElapsedTime();
+            if (mode != TimerMode.Countdown || RemainingCentiseconds > 0) return;
             tickTimer.Stop();
             isRunning = false;
-            startPauseButton.Text = "开始";
-            startPauseButton.BackColor = GoogleBlue;
-            minutesInput.Enabled = true;
-            secondsInput.Enabled = true;
-            SystemSounds.Exclamation.Play();
+            startPauseButton.Text = "▶";
+            if (soundEnabled) SystemSounds.Exclamation.Play();
             MessageBox.Show("时间到。", "计时器", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
-        private void UpdateRunningTime()
+        private void UpdateElapsedTime()
         {
-            int elapsed = Math.Max(0, (int)Math.Floor((DateTime.UtcNow - runStartedAt).TotalSeconds));
-            if (elapsed == 0) return;
-            displayedSeconds = mode == TimerMode.Countdown ? Math.Max(0, displayedSeconds - elapsed) : displayedSeconds + elapsed;
-            runStartedAt = runStartedAt.AddSeconds(elapsed);
-            UpdateTimeDisplay();
+            long passed = Math.Max(0, (long)Math.Floor((DateTime.UtcNow - runStartedAt).TotalMilliseconds / 10));
+            if (passed == 0) return;
+            elapsedCentiseconds += passed;
+            runStartedAt = runStartedAt.AddMilliseconds(passed * 10);
+            RefreshDisplay();
         }
 
         private void ResetTimer()
         {
             tickTimer.Stop();
             isRunning = false;
-            displayedSeconds = mode == TimerMode.Countdown ? GetInputSeconds() : 0;
-            minutesInput.Enabled = mode == TimerMode.Countdown;
-            secondsInput.Enabled = mode == TimerMode.Countdown;
-            startPauseButton.Text = "开始";
-            startPauseButton.BackColor = GoogleBlue;
-            UpdateTimeDisplay();
+            elapsedCentiseconds = 0;
+            startPauseButton.Text = "▶";
+            RefreshDisplay();
         }
 
-        private void PreviewCountdown()
+        private void ConfigureCountdown()
         {
-            if (mode == TimerMode.Countdown && !isRunning)
+            if (mode != TimerMode.Countdown || isRunning) return;
+
+            using (var dialog = new Form
             {
-                displayedSeconds = GetInputSeconds();
-                UpdateTimeDisplay();
+                Text = "设置倒计时",
+                ClientSize = new Size(260, 132),
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                MaximizeBox = false,
+                MinimizeBox = false,
+                StartPosition = FormStartPosition.CenterParent,
+                BackColor = Background,
+                ForeColor = TimeText
+            })
+            using (var minutesInput = new NumericUpDown { Minimum = 0, Maximum = 999, Value = countdownCentiseconds / 6000, Location = new Point(30, 46), Size = new Size(80, 28), Font = new Font("Segoe UI", 11F) })
+            using (var secondsInput = new NumericUpDown { Minimum = 0, Maximum = 59, Value = countdownCentiseconds / 100 % 60, Location = new Point(142, 46), Size = new Size(80, 28), Font = new Font("Segoe UI", 11F) })
+            {
+                dialog.Controls.AddRange(new Control[]
+                {
+                    new Label { Text = "分钟", ForeColor = TimeText, BackColor = dialog.BackColor, Location = new Point(48, 20), AutoSize = true },
+                    new Label { Text = "秒", ForeColor = TimeText, BackColor = dialog.BackColor, Location = new Point(170, 20), AutoSize = true },
+                    minutesInput,
+                    secondsInput
+                });
+                var confirmButton = new Button { Text = "确定", DialogResult = DialogResult.OK, Location = new Point(93, 91), Size = new Size(74, 28) };
+                dialog.Controls.Add(confirmButton);
+                dialog.AcceptButton = confirmButton;
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                countdownCentiseconds = ((long)minutesInput.Value * 60 + (long)secondsInput.Value) * 100;
+                elapsedCentiseconds = 0;
+                RefreshDisplay();
             }
         }
 
-        private int GetInputSeconds() => (int)minutesInput.Value * 60 + (int)secondsInput.Value;
+        private long RemainingCentiseconds => Math.Max(0, countdownCentiseconds - elapsedCentiseconds);
 
-        private void UpdateTimeDisplay()
+        private void RefreshDisplay()
         {
-            int hours = displayedSeconds / 3600;
-            int minutes = displayedSeconds % 3600 / 60;
-            int seconds = displayedSeconds % 60;
-            timeLabel.Text = hours > 0 ? string.Format("{0:00}:{1:00}:{2:00}", hours, minutes, seconds) : string.Format("{0:00}:{1:00}", minutes, seconds);
+            long value = mode == TimerMode.Countdown ? RemainingCentiseconds : elapsedCentiseconds;
+            display.SetTime(value, mode == TimerMode.Countdown, mode == TimerMode.Countdown ? countdownCentiseconds : 6000);
+        }
+    }
+
+    internal sealed class CircularTimerDisplay : Control
+    {
+        private long centiseconds;
+        private long totalCentiseconds;
+        private bool countdown;
+
+        public CircularTimerDisplay()
+        {
+            DoubleBuffered = true;
+        }
+
+        public void SetTime(long newCentiseconds, bool isCountdown, long total)
+        {
+            centiseconds = newCentiseconds;
+            countdown = isCountdown;
+            totalCentiseconds = Math.Max(1, total);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            int inset = 14;
+            var bounds = new Rectangle(inset, inset, Width - inset * 2, Height - inset * 2);
+            using (var ringPen = new Pen(Color.FromArgb(83, 70, 43), 8F))
+            {
+                e.Graphics.DrawEllipse(ringPen, bounds);
+            }
+
+            float progress = countdown ? 1F - Math.Min(1F, (float)centiseconds / totalCentiseconds) : (float)(centiseconds % totalCentiseconds) / totalCentiseconds;
+            float angle = -90F + progress * 360F;
+            double radians = angle * Math.PI / 180D;
+            float radius = bounds.Width / 2F;
+            float centerX = bounds.Left + radius;
+            float centerY = bounds.Top + radius;
+            float markerX = centerX + (float)Math.Cos(radians) * radius;
+            float markerY = centerY + (float)Math.Sin(radians) * radius;
+            using (var markerBrush = new SolidBrush(Color.FromArgb(251, 188, 75)))
+            {
+                e.Graphics.FillEllipse(markerBrush, markerX - 14, markerY - 14, 28, 28);
+            }
+
+            long totalSeconds = centiseconds / 100;
+            int hours = (int)(totalSeconds / 3600);
+            int minutes = (int)(totalSeconds % 3600 / 60);
+            int seconds = (int)(totalSeconds % 60);
+            int fractions = (int)(centiseconds % 100);
+            string time = hours > 0
+                ? string.Format("{0:00}:{1:00}:{2:00}.{3:00}", hours, minutes, seconds, fractions)
+                : string.Format("{0:00}:{1:00}.{2:00}", minutes, seconds, fractions);
+            using (var font = new Font("Segoe UI", 46F, FontStyle.Regular, GraphicsUnit.Point))
+            using (var textBrush = new SolidBrush(Color.FromArgb(255, 241, 223)))
+            {
+                var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                e.Graphics.DrawString(time, font, textBrush, new RectangleF(18, 18, Width - 36, Height - 36), format);
+            }
         }
     }
 }
