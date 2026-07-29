@@ -8,5 +8,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>FocusTimer</AssemblyName>
     <RootNamespace>FocusTimer</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="app.ico" />
+  </ItemGroup>
 </Project>

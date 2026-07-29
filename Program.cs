@@ -55,6 +55,15 @@ namespace FocusTimer
             MaximizeBox = false;
             BackColor = Colors.Window;
             KeyPreview = true;
+            try
+            {
+                string? processPath = Environment.ProcessPath;
+                if (!string.IsNullOrWhiteSpace(processPath))
+                    Icon = Icon.ExtractAssociatedIcon(processPath);
+            }
+            catch
+            {
+            }
             canvas = new TimerCanvas { Dock = DockStyle.Fill };
             Controls.Add(canvas);
             Shown += delegate { canvas.Focus(); };
