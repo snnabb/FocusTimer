@@ -273,7 +273,7 @@ struct NodeDetailView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
-                if let latest = try? await store.refreshNode(node.uuid), historyHours == 0, let latest {
+                if historyHours == 0, let latest = try? await store.refreshNode(node.uuid) {
                     if history.last?.time != latest.time {
                         withAnimation(.linear(duration: 0.35)) {
                             history.append(latest)

@@ -171,7 +171,7 @@ final class MonitorStore: ObservableObject {
     }
 
     func refreshPingSummaries() async {
-        guard let panel, let apiKey = try? KeychainStore.loadAPIKey(), let apiKey else { return }
+        guard let panel, let apiKey = try? KeychainStore.loadAPIKey() else { return }
         guard let client = try? KomariAPIClient(panel: panel, apiKey: apiKey) else { return }
         let taskNames = Dictionary(uniqueKeysWithValues: pingTasks.map { ($0.id, $0.name) })
         let nodeIDs = Array(nodes.keys)
