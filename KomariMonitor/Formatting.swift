@@ -17,14 +17,12 @@ extension Double {
 
 extension String {
     var komariDate: Date? {
-        ISO8601DateFormatter.komari.date(from: self)
-    }
-}
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: self) { return date }
 
-extension ISO8601DateFormatter {
-    static let komari: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+        let standard = ISO8601DateFormatter()
+        standard.formatOptions = [.withInternetDateTime]
+        return standard.date(from: self)
+    }
 }
