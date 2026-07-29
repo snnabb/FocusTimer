@@ -1,0 +1,62 @@
+name: Build Unsigned Komari IPA
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: App Bundle ID
+        required: true
+        default: app.komari.monitor
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        working-directory: KomariMonitor
+        run: xcodegen generate
+
+      - name: Build unsigned device app
+        env:
+          BUNDLE_ID: ${{ inputs.bundle_id }}
+        run: |
+          xcodebuild \
+            -project KomariMonitor/KomariMonitor.xcodeproj \
+            -scheme KomariMonitor \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/DerivedData \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH=$(find build/DerivedData/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' -print -quit)
+          test -n "$APP_PATH"
+          mkdir -p build/Payload
+          cp -R "$APP_PATH" build/Payload/
+          cd build
+          zip -qry KomariMonitor-unsigned.ipa Payload
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: KomariMonitor-Unsigned-IPA
+          path: build/KomariMonitor-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 7

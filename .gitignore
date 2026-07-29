@@ -2,3 +2,11 @@ bin/
 obj/
 *.exe
 *.pdb
+
+# Komari iOS generated files
+KomariMonitor/*.xcodeproj/
+KomariMonitor/*.xcworkspace/
+build/
+*.ipa
+*.mobileprovision
+*.p12
