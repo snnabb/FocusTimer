@@ -3,6 +3,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Media;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace FocusTimer
@@ -37,28 +38,33 @@ namespace FocusTimer
 
     internal sealed class TimerForm : Form
     {
+        private const int DwmWindowCornerPreference = 33;
+        private const int DwmCornerRound = 2;
         private readonly TimerCanvas canvas;
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int size);
 
         public TimerForm()
         {
             Text = "Mori Timer";
-            ClientSize = new Size(560, 480);
-            MinimumSize = MaximumSize = new Size(576, 519);
+            ClientSize = new Size(620, 550);
+            MinimumSize = MaximumSize = new Size(620, 550);
             StartPosition = FormStartPosition.CenterScreen;
             FormBorderStyle = FormBorderStyle.None;
             BackColor = Colors.Window;
             KeyPreview = true;
-            Padding = new Padding(1);
             canvas = new TimerCanvas { Dock = DockStyle.Fill };
             Controls.Add(canvas);
-            Resize += delegate { ApplyRoundedWindow(); };
-            Shown += delegate { ApplyRoundedWindow(); canvas.Focus(); };
+            Shown += delegate { canvas.Focus(); };
         }
 
-        private void ApplyRoundedWindow()
+        protected override void OnHandleCreated(EventArgs e)
         {
-            using (var path = Shape.RoundRect(new Rectangle(0, 0, Width, Height), 24))
-                Region = new Region(path);
+            base.OnHandleCreated(e);
+            if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
+            int preference = DwmCornerRound;
+            DwmSetWindowAttribute(Handle, DwmWindowCornerPreference, ref preference, sizeof(int));
         }
     }
 
@@ -104,8 +110,7 @@ namespace FocusTimer
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             using (var border = new Pen(Colors.Line, 1F))
-            using (var path = Shape.RoundRect(new Rectangle(0, 0, Width - 1, Height - 1), 23))
-                g.DrawPath(border, path);
+                g.DrawRectangle(border, 0, 0, Width - 1, Height - 1);
             DrawTitleBar(g);
             DrawModePicker(g);
             DrawMainCard(g);
@@ -114,11 +119,11 @@ namespace FocusTimer
 
         private void DrawTitleBar(Graphics g)
         {
-            DrawLabel(g, "Mori", 14F, FontStyle.Bold, Colors.Text, new Rectangle(24, 13, 130, 32), StringAlignment.Near);
-            DrawLabel(g, "少一点干扰，多一点专注", 8F, FontStyle.Regular, Colors.Secondary, new Rectangle(24, 40, 210, 22), StringAlignment.Near);
-            pinButton = new Rectangle(430, 17, 30, 30);
-            minimizeButton = new Rectangle(467, 17, 30, 30);
-            closeButton = new Rectangle(504, 17, 30, 30);
+            DrawLabel(g, "Mori", 15F, FontStyle.Bold, Colors.Text, new Rectangle(28, 18, 150, 34), StringAlignment.Near);
+            DrawLabel(g, "少一点干扰，多一点专注", 8.5F, FontStyle.Regular, Colors.Secondary, new Rectangle(29, 51, 230, 22), StringAlignment.Near);
+            pinButton = new Rectangle(484, 23, 32, 32);
+            minimizeButton = new Rectangle(524, 23, 32, 32);
+            closeButton = new Rectangle(564, 23, 32, 32);
             CircleIcon(g, pinButton, pinned ? Colors.AccentSoft : Colors.Window, "⌖", pinned ? Colors.Accent : Colors.Secondary, 11F);
             CircleIcon(g, minimizeButton, Colors.Window, "—", Colors.Secondary, 10F);
             CircleIcon(g, closeButton, Colors.Window, "×", Colors.Secondary, 12F);
@@ -126,31 +131,31 @@ namespace FocusTimer
 
         private void DrawModePicker(Graphics g)
         {
-            var container = new Rectangle(176, 76, 208, 40);
-            Shape.Fill(g, container, 13, Colors.Soft);
-            countdownTab = new Rectangle(180, 80, 100, 32);
-            stopwatchTab = new Rectangle(280, 80, 100, 32);
-            Shape.Fill(g, mode == TimerMode.Countdown ? countdownTab : stopwatchTab, 10, Colors.Card);
-            DrawLabel(g, "倒计时", 9F, FontStyle.Bold, mode == TimerMode.Countdown ? Colors.Text : Colors.Secondary, countdownTab, StringAlignment.Center);
-            DrawLabel(g, "正计时", 9F, FontStyle.Bold, mode == TimerMode.Stopwatch ? Colors.Text : Colors.Secondary, stopwatchTab, StringAlignment.Center);
+            var container = new Rectangle(196, 91, 228, 44);
+            Shape.Fill(g, container, 15, Colors.Soft);
+            countdownTab = new Rectangle(200, 95, 110, 36);
+            stopwatchTab = new Rectangle(310, 95, 110, 36);
+            Shape.Fill(g, mode == TimerMode.Countdown ? countdownTab : stopwatchTab, 12, Colors.Card);
+            DrawLabel(g, "倒计时", 9.5F, FontStyle.Bold, mode == TimerMode.Countdown ? Colors.Text : Colors.Secondary, countdownTab, StringAlignment.Center);
+            DrawLabel(g, "正计时", 9.5F, FontStyle.Bold, mode == TimerMode.Stopwatch ? Colors.Text : Colors.Secondary, stopwatchTab, StringAlignment.Center);
         }
 
         private void DrawMainCard(Graphics g)
         {
-            var shadow = new Rectangle(35, 135, 490, 255);
-            Shape.Fill(g, new Rectangle(shadow.X, shadow.Y + 3, shadow.Width, shadow.Height), 24, Color.FromArgb(14, 0, 0, 0));
-            Shape.Fill(g, shadow, 24, Colors.Card);
+            var card = new Rectangle(40, 157, 540, 300);
+            Shape.Fill(g, new Rectangle(card.X, card.Y + 4, card.Width, card.Height), 26, Color.FromArgb(12, 0, 0, 0));
+            Shape.Fill(g, card, 26, Colors.Card);
 
             string label = mode == TimerMode.Countdown ? "剩余时间" : "已专注";
-            DrawLabel(g, label, 9F, FontStyle.Regular, Colors.Secondary, new Rectangle(60, 160, 440, 24), StringAlignment.Center);
+            DrawLabel(g, label, 9.5F, FontStyle.Regular, Colors.Secondary, new Rectangle(70, 184, 480, 26), StringAlignment.Center);
             string time = mode == TimerMode.Countdown ? FormatCountdown(RemainingMilliseconds) : FormatStopwatch(CurrentElapsedMilliseconds);
-            float size = time.Length > 8 ? 40F : 50F;
-            DrawLabel(g, time, size, FontStyle.Regular, Colors.Text, new Rectangle(54, 190, 452, 84), StringAlignment.Center);
-            DrawLabel(g, StatusText(), 8.5F, FontStyle.Regular, state == TimerState.Finished ? Colors.Danger : Colors.Secondary, new Rectangle(60, 270, 440, 24), StringAlignment.Center);
+            float size = time.Length > 8 ? 43F : 54F;
+            DrawLabel(g, time, size, FontStyle.Regular, Colors.Text, new Rectangle(66, 216, 488, 92), StringAlignment.Center);
+            DrawLabel(g, StatusText(), 9F, FontStyle.Regular, state == TimerState.Finished ? Colors.Danger : Colors.Secondary, new Rectangle(70, 306, 480, 25), StringAlignment.Center);
 
             if (mode == TimerMode.Countdown)
             {
-                var track = new Rectangle(78, 313, 404, 6);
+                var track = new Rectangle(91, 353, 438, 6);
                 Shape.Fill(g, track, 3, Colors.Soft);
                 float progress = durationMilliseconds == 0 ? 0 : 1F - (float)RemainingMilliseconds / durationMilliseconds;
                 if (progress > 0)
@@ -162,42 +167,42 @@ namespace FocusTimer
             }
             else
             {
-                DrawLabel(g, "精确到百分之一秒", 8F, FontStyle.Regular, Colors.Secondary, new Rectangle(60, 327, 440, 22), StringAlignment.Center);
+                DrawLabel(g, "精确到百分之一秒", 8.5F, FontStyle.Regular, Colors.Secondary, new Rectangle(70, 378, 480, 24), StringAlignment.Center);
             }
         }
 
         private void DrawPresets(Graphics g)
         {
-            int x = 126;
+            int x = 143;
             for (int i = 0; i < Presets.Length; i++)
             {
-                presetButtons[i] = new Rectangle(x + i * 80, 339, 70, 32);
+                presetButtons[i] = new Rectangle(x + i * 86, 383, 76, 36);
                 bool selected = state == TimerState.Ready && durationMilliseconds == Presets[i] * 60L * 1000L;
-                Shape.Fill(g, presetButtons[i], 16, selected ? Colors.AccentSoft : Colors.Window);
-                DrawLabel(g, Presets[i] + " 分", 8.5F, FontStyle.Bold, selected ? Colors.Accent : Colors.Secondary, presetButtons[i], StringAlignment.Center);
+                Shape.Fill(g, presetButtons[i], 18, selected ? Colors.AccentSoft : Colors.Window);
+                DrawLabel(g, Presets[i] + " 分", 9F, FontStyle.Bold, selected ? Colors.Accent : Colors.Secondary, presetButtons[i], StringAlignment.Center);
             }
-            customButton = new Rectangle(366, 339, 68, 32);
-            Shape.Fill(g, customButton, 16, Colors.Window);
-            DrawLabel(g, "自定义", 8.5F, FontStyle.Bold, Colors.Secondary, customButton, StringAlignment.Center);
+            customButton = new Rectangle(401, 383, 76, 36);
+            Shape.Fill(g, customButton, 18, Colors.Window);
+            DrawLabel(g, "自定义", 9F, FontStyle.Bold, Colors.Secondary, customButton, StringAlignment.Center);
         }
 
         private void DrawBottomActions(Graphics g)
         {
-            int y = 414;
-            secondaryButton = new Rectangle(35, y, 112, 44);
-            primaryButton = new Rectangle(state == TimerState.Ready ? 159 : 159, y, state == TimerState.Ready ? 366 : 366, 44);
+            int y = 481;
+            secondaryButton = new Rectangle(40, y, 126, 48);
+            primaryButton = new Rectangle(180, y, 400, 48);
             bool secondaryEnabled = state != TimerState.Ready;
-            Shape.Fill(g, secondaryButton, 16, secondaryEnabled ? Colors.Soft : Color.FromArgb(241, 241, 243));
-            DrawLabel(g, "重置", 9F, FontStyle.Bold, secondaryEnabled ? Colors.Secondary : Color.FromArgb(185, 185, 190), secondaryButton, StringAlignment.Center);
+            Shape.Fill(g, secondaryButton, 18, secondaryEnabled ? Colors.Soft : Color.FromArgb(241, 241, 243));
+            DrawLabel(g, "重置", 9.5F, FontStyle.Bold, secondaryEnabled ? Colors.Secondary : Color.FromArgb(185, 185, 190), secondaryButton, StringAlignment.Center);
             bool running = state == TimerState.Running;
-            Shape.Fill(g, primaryButton, 16, running ? Colors.Text : Colors.Accent);
-            DrawLabel(g, running ? "暂停" : state == TimerState.Paused ? "继续" : "开始", 9.5F, FontStyle.Bold, Color.White, primaryButton, StringAlignment.Center);
+            Shape.Fill(g, primaryButton, 18, running ? Colors.Text : Colors.Accent);
+            DrawLabel(g, running ? "暂停" : state == TimerState.Paused ? "继续" : "开始", 10F, FontStyle.Bold, Color.White, primaryButton, StringAlignment.Center);
         }
 
         private void HandleMouseDown(object? sender, MouseEventArgs e)
         {
             Focus();
-            if (e.Button == MouseButtons.Left && e.Y < 66 && !pinButton.Contains(e.Location) && !minimizeButton.Contains(e.Location) && !closeButton.Contains(e.Location))
+            if (e.Button == MouseButtons.Left && e.Y < 78 && !pinButton.Contains(e.Location) && !minimizeButton.Contains(e.Location) && !closeButton.Contains(e.Location))
                 dragOrigin = e.Location;
         }
 
