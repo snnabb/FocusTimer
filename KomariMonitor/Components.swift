@@ -31,6 +31,7 @@ struct UsageBar: View {
     let value: Double
     let detail: String?
     var tint: Color = .cyan
+    var animated = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -43,7 +44,7 @@ struct UsageBar: View {
             }
             ProgressView(value: min(max(value, 0), 100), total: 100)
                 .tint(value >= 90 ? .red : value >= 75 ? .orange : tint)
-                .animation(.easeInOut(duration: 0.3), value: value)
+                .animation(animated ? .easeInOut(duration: 0.3) : nil, value: value)
         }
     }
 }
@@ -92,9 +93,9 @@ struct NodeCard: View {
                     }
                 }
             }
-            UsageBar(title: "CPU", value: status?.cpu ?? 0, detail: status?.cpu?.percentString)
-            UsageBar(title: "内存", value: memoryPercent, detail: memoryPercent.percentString, tint: .indigo)
-            UsageBar(title: "磁盘", value: diskPercent, detail: diskPercent.percentString, tint: .purple)
+            UsageBar(title: "CPU", value: status?.cpu ?? 0, detail: status?.cpu?.percentString, animated: false)
+            UsageBar(title: "内存", value: memoryPercent, detail: memoryPercent.percentString, tint: .indigo, animated: false)
+            UsageBar(title: "磁盘", value: diskPercent, detail: diskPercent.percentString, tint: .purple, animated: false)
 
             HStack {
                 Label((status?.netIn ?? 0).rateString, systemImage: "arrow.down")
@@ -107,14 +108,14 @@ struct NodeCard: View {
             trafficView
         }
         .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
     @ViewBuilder
     private var trafficView: some View {
         if let used = node.trafficUsed(status: status), let limit = node.trafficLimit, limit > 0,
            let percent = node.trafficPercent(status: status) {
-            UsageBar(title: "累计流量", value: percent, detail: "\(used.byteString) / \(limit.byteString)", tint: .blue)
+            UsageBar(title: "累计流量", value: percent, detail: "\(used.byteString) / \(limit.byteString)", tint: .blue, animated: false)
         } else if let status {
             HStack {
                 Text("累计流量").foregroundStyle(.secondary)

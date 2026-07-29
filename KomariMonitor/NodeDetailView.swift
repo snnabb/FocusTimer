@@ -4,12 +4,14 @@ import Charts
 struct NodeDetailView: View {
     @EnvironmentObject private var store: MonitorStore
     let node: KomariNode
-    @State private var history: [NodeStatus] = []
+    @State private var history: [HistoricalSample] = []
     @State private var pingResponse: PingRecordsResponse?
     @State private var historyHours = 0
     @State private var loadingHistory = false
     @State private var historyError: String?
     @State private var realtimeTask: Task<Void, Never>?
+    @State private var selectedHistoryTime: Date?
+    @State private var showingLatencyDetails = false
 
     private var status: NodeStatus? { store.statuses[node.uuid] }
     private var pingTasks: [PingTask] { store.pingTasks.filter { $0.clients?.contains(node.uuid) == true || $0.defaultOn == true } }
@@ -39,6 +41,11 @@ struct NodeDetailView: View {
             _ = try? await store.refreshNode(node.uuid)
             await loadHistory()
             await loadPing()
+        }
+        .sheet(isPresented: $showingLatencyDetails) {
+            if let pingResponse {
+                LatencyDetailView(nodeName: node.name, tasks: pingTasks, response: pingResponse)
+            }
         }
     }
 
@@ -123,43 +130,44 @@ struct NodeDetailView: View {
 
     private var latencySection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionHeader("网络延迟", detail: "最近记录")
+            HStack {
+                Text("网络延迟").font(.title2.bold())
+                Spacer()
+                if pingResponse?.records.isEmpty == false {
+                    Button("详细趋势") { showingLatencyDetails = true }
+                        .font(.subheadline.weight(.semibold))
+                }
+            }
             if let response = pingResponse, !response.records.isEmpty {
                 let grouped = Dictionary(grouping: response.records, by: { $0.taskID ?? -1 })
-                ForEach(grouped.keys.sorted(), id: \.self) { taskID in
-                    if let records = grouped[taskID], let latest = records.max(by: { $0.time < $1.time }) {
-                        let task = pingTasks.first(where: { $0.id == taskID })
-                        let values = records.map(\.value)
-                        VStack(alignment: .leading, spacing: 8) {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("检测目标").frame(maxWidth: .infinity, alignment: .leading)
+                        Text("当前").frame(width: 68, alignment: .trailing)
+                        Text("平均").frame(width: 68, alignment: .trailing)
+                    }
+                    .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    .padding(.vertical, 10)
+                    Divider()
+                    ForEach(grouped.keys.sorted(), id: \.self) { taskID in
+                        if let records = grouped[taskID], let latest = records.max(by: { $0.time < $1.time }) {
+                            let values = records.map(\.value)
                             HStack {
-                                Text(task?.name ?? "延迟任务").font(.headline)
-                                Spacer()
+                                Text(pingTasks.first(where: { $0.id == taskID })?.name ?? "任务 \(taskID)")
+                                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
                                 Text("\(Int(latest.value.rounded())) ms")
-                                    .font(.headline.monospacedDigit())
-                                    .foregroundStyle(latencyColor(latest.value))
+                                    .foregroundStyle(latencyColor(latest.value)).frame(width: 68, alignment: .trailing)
+                                Text("\(Int((values.reduce(0, +) / Double(values.count)).rounded())) ms")
+                                    .frame(width: 68, alignment: .trailing)
                             }
-                            HStack {
-                                Text("平均 \(Int((values.reduce(0, +) / Double(values.count)).rounded())) ms")
-                                Text("最低 \(Int((values.min() ?? 0).rounded())) ms")
-                                Text("最高 \(Int((values.max() ?? 0).rounded())) ms")
-                                if let loss = response.basicInfo?.first(where: { $0.client == node.uuid })?.loss {
-                                    Text("丢包 \(String(format: "%.1f", loss))%")
-                                }
-                            }
-                            .font(.caption).foregroundStyle(.secondary)
-                            Chart(records.suffix(60)) { record in
-                                if let date = record.time.komariDate {
-                                    LineMark(x: .value("时间", date), y: .value("延迟", record.value))
-                                        .foregroundStyle(.green)
-                                        .interpolationMethod(.catmullRom)
-                                }
-                            }
-                            .frame(height: 90)
+                            .font(.subheadline.monospacedDigit())
+                            .padding(.vertical, 11)
+                            Divider()
                         }
-                        .padding(14)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
                     }
                 }
+                .padding(.horizontal, 14)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
             } else {
                 ContentUnavailableView("暂无延迟记录", systemImage: "network")
                     .frame(minHeight: 120)
@@ -189,10 +197,10 @@ struct NodeDetailView: View {
                 ContentUnavailableView(store.publicInfo?.recordEnabled == false ? "Komari 未开启历史记录" : "暂无历史记录", systemImage: "chart.xyaxis.line")
                     .frame(minHeight: 180)
             } else {
-                metricChart(title: "CPU 与负载", primary: "CPU", primaryColor: .cyan, primaryValue: { $0.cpu }, secondary: "负载", secondaryColor: .orange, secondaryValue: { ($0.load ?? 0) * 10 })
-                metricChart(title: "内存与磁盘", primary: "内存", primaryColor: .indigo, primaryValue: { record in percent(record.ram, total: record.ramTotal ?? node.memTotal) }, secondary: "磁盘", secondaryColor: .purple, secondaryValue: { record in percent(record.disk, total: record.diskTotal ?? node.diskTotal) })
-                metricChart(title: "网络速度 MB/s", primary: "下载", primaryColor: .blue, primaryValue: { Double($0.netIn ?? 0) / 1_048_576 }, secondary: "上传", secondaryColor: .purple, secondaryValue: { Double($0.netOut ?? 0) / 1_048_576 })
-                metricChart(title: "连接与进程", primary: "TCP", primaryColor: .green, primaryValue: { Double($0.connections ?? 0) }, secondary: "进程", secondaryColor: .indigo, secondaryValue: { Double($0.process ?? 0) })
+                InteractiveMetricChart(title: "CPU 与负载", samples: history, primaryName: "CPU %", primaryColor: .cyan, primaryValue: { $0.cpu }, secondaryName: "Load", secondaryColor: .orange, secondaryValue: { $0.load }, selectedTime: $selectedHistoryTime)
+                InteractiveMetricChart(title: "内存与磁盘 %", samples: history, primaryName: "内存", primaryColor: .indigo, primaryValue: { percent($0.memoryUsed, total: $0.memoryTotal) }, secondaryName: "磁盘", secondaryColor: .purple, secondaryValue: { percent($0.diskUsed, total: $0.diskTotal) }, selectedTime: $selectedHistoryTime)
+                InteractiveMetricChart(title: "网络速度 MB/s", samples: history, primaryName: "下载", primaryColor: .blue, primaryValue: { Double($0.networkIn ?? 0) / 1_048_576 }, secondaryName: "上传", secondaryColor: .purple, secondaryValue: { Double($0.networkOut ?? 0) / 1_048_576 }, selectedTime: $selectedHistoryTime)
+                InteractiveMetricChart(title: "连接与进程", samples: history, primaryName: "TCP", primaryColor: .green, primaryValue: { Double($0.connections ?? 0) }, secondaryName: "进程", secondaryColor: .indigo, secondaryValue: { Double($0.process ?? 0) }, selectedTime: $selectedHistoryTime)
             }
         }
     }
@@ -227,26 +235,6 @@ struct NodeDetailView: View {
         }
     }
 
-    private func metricChart(title: String, primary: String, primaryColor: Color, primaryValue: @escaping (NodeStatus) -> Double?, secondary: String, secondaryColor: Color, secondaryValue: @escaping (NodeStatus) -> Double?) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline)
-            Chart(history) { record in
-                if let date = record.time.komariDate, let value = primaryValue(record) {
-                    LineMark(x: .value("时间", date), y: .value(primary, value), series: .value("指标", primary))
-                        .foregroundStyle(primaryColor)
-                        .interpolationMethod(.catmullRom)
-                }
-                if let date = record.time.komariDate, let value = secondaryValue(record) {
-                    LineMark(x: .value("时间", date), y: .value(secondary, value), series: .value("指标", secondary))
-                        .foregroundStyle(secondaryColor)
-                        .interpolationMethod(.catmullRom)
-                }
-            }
-            .frame(height: 190)
-        }
-        .padding(14)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
-    }
 
     @ViewBuilder
     private func infoRow(_ title: String, _ value: String?) -> some View {
@@ -273,12 +261,10 @@ struct NodeDetailView: View {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard !Task.isCancelled else { return }
-                if historyHours == 0, let latest = try? await store.refreshNode(node.uuid) {
+                if historyHours == 0, let latestStatus = try? await store.refreshNode(node.uuid), let latest = HistoricalSample(status: latestStatus, node: node) {
                     if history.last?.time != latest.time {
-                        withAnimation(.linear(duration: 0.35)) {
-                            history.append(latest)
-                            if history.count > 120 { history.removeFirst(history.count - 120) }
-                        }
+                        history.append(latest)
+                        if history.count > 120 { history.removeFirst(history.count - 120) }
                     }
                 }
             }
@@ -290,8 +276,8 @@ struct NodeDetailView: View {
         historyError = nil
         defer { loadingHistory = false }
         do {
-            let records = historyHours == 0 ? try await store.recentHistory(for: node.uuid) : try await store.history(for: node.uuid, hours: historyHours)
-            history = records.sorted { ($0.time.komariDate ?? .distantPast) < ($1.time.komariDate ?? .distantPast) }
+            history = try await store.compatibleHistory(for: node, hours: historyHours)
+            selectedHistoryTime = nil
         } catch {
             historyError = error.localizedDescription
             history = []

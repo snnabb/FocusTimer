@@ -60,12 +60,6 @@ struct DashboardView: View {
         .navigationTitle(store.panel?.name ?? "Komari")
         .navigationDestination(for: KomariNode.self) { NodeDetailView(node: $0) }
         .refreshable { await store.refresh() }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                if store.isRefreshing { ProgressView() }
-                else { Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") } }
-            }
-        }
     }
 
     private var connectionBanner: some View {

@@ -161,6 +161,58 @@ final class MonitorStore: ObservableObject {
         return result.records
     }
 
+    func compatibleHistory(for node: KomariNode, hours: Int) async throws -> [HistoricalSample] {
+        var failures: [String] = []
+
+        if hours == 0 {
+            do {
+                let records = try await recentHistory(for: node.uuid)
+                let samples = records.compactMap { HistoricalSample(status: $0, node: node) }
+                if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+                failures.append("近期 RPC 返回 0 条记录")
+            } catch {
+                failures.append("近期 RPC：\(error.localizedDescription)")
+            }
+
+            do {
+                guard let panel, let apiKey = try KeychainStore.loadAPIKey() else { throw KomariAPIError.invalidAPIKey }
+                let client = try KomariAPIClient(panel: panel, apiKey: apiKey)
+                let response: LegacyRecentResponse = try await client.call("public:getClientRecentRecords", params: ["uuid": .string(node.uuid)])
+                let samples = response.records.compactMap { $0.sample(node: node) }
+                if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+                failures.append("兼容近期 RPC 返回 0 条记录")
+            } catch {
+                failures.append("兼容近期 RPC：\(error.localizedDescription)")
+            }
+        }
+
+        do {
+            let records = try await history(for: node.uuid, hours: max(hours, 1))
+            let samples = records.compactMap { HistoricalSample(status: $0, node: node) }
+            if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+            failures.append("历史 RPC 返回 0 条记录")
+        } catch {
+            failures.append("历史 RPC：\(error.localizedDescription)")
+        }
+
+        do {
+            guard let panel, let apiKey = try KeychainStore.loadAPIKey() else { throw KomariAPIError.invalidAPIKey }
+            let client = try KomariAPIClient(panel: panel, apiKey: apiKey)
+            let response: LegacyRecentResponse = try await client.call("public:getRecordsByUUID", params: [
+                "uuid": .string(node.uuid),
+                "load_type": .string("all"),
+                "hours": .string(String(max(hours, 1)))
+            ])
+            let samples = response.records.compactMap { $0.sample(node: node) }
+            if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+            failures.append("兼容历史 RPC 返回 0 条记录")
+        } catch {
+            failures.append("兼容历史 RPC：\(error.localizedDescription)")
+        }
+
+        throw KomariAPIError.rpc(-1, failures.joined(separator: "；"))
+    }
+
     func pingDetails(for uuid: String, hours: Int = 6) async throws -> PingRecordsResponse {
         guard let panel, let apiKey = try KeychainStore.loadAPIKey() else { throw KomariAPIError.invalidAPIKey }
         let client = try KomariAPIClient(panel: panel, apiKey: apiKey)
