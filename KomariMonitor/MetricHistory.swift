@@ -35,21 +35,30 @@ extension MetricQueryResponse {
                 values[second, default: [:]][item.metricKey] = (date, value)
             }
         }
-        return values.keys.sorted().map { second in
-            let item = values[second]!
-            return HistoricalSample(
+        var samples: [HistoricalSample] = []
+        samples.reserveCapacity(values.count)
+        for second in values.keys.sorted() {
+            guard let item = values[second] else { continue }
+            let memoryUsed = item["memory.used"].map { Int64($0.value) }
+            let diskUsed = item["disk.used"].map { Int64($0.value) }
+            let networkIn = item["net.in.rate"].map { Int64($0.value) }
+            let networkOut = item["net.out.rate"].map { Int64($0.value) }
+            let connections = item["connections.tcp"].map { Int($0.value) }
+            let process = item["process.count"].map { Int($0.value) }
+            samples.append(HistoricalSample(
                 time: Date(timeIntervalSince1970: TimeInterval(second)),
                 cpu: item["cpu.usage"]?.value,
                 load: item["load.average"]?.value,
-                memoryUsed: item["memory.used"]?.value.map(Int64.init),
+                memoryUsed: memoryUsed,
                 memoryTotal: node.memTotal,
-                diskUsed: item["disk.used"]?.value.map(Int64.init),
+                diskUsed: diskUsed,
                 diskTotal: node.diskTotal,
-                networkIn: item["net.in.rate"]?.value.map(Int64.init),
-                networkOut: item["net.out.rate"]?.value.map(Int64.init),
-                connections: item["connections.tcp"]?.value.map(Int.init),
-                process: item["process.count"]?.value.map(Int.init)
-            )
+                networkIn: networkIn,
+                networkOut: networkOut,
+                connections: connections,
+                process: process
+            ))
         }
+        return samples
     }
 }
