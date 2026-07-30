@@ -18,13 +18,25 @@ struct RootView: View {
             SetupView()
                 .interactiveDismissDisabled(store.panel == nil)
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let reconnectMessage = store.reconnectMessage {
+                Label(reconnectMessage, systemImage: "arrow.triangle.2.circlepath")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
+                    .background(.orange.opacity(0.12))
+                    .accessibilityLabel(reconnectMessage)
+            }
+        }
         .alert("连接异常", isPresented: Binding(
-            get: { store.errorMessage != nil },
-            set: { if !$0 { store.errorMessage = nil } }
+            get: { store.actionableErrorMessage != nil },
+            set: { if !$0 { store.actionableErrorMessage = nil } }
         )) {
-            Button("好") { store.errorMessage = nil }
+            Button("好") { store.actionableErrorMessage = nil }
         } message: {
-            Text(store.errorMessage ?? "未知错误")
+            Text(store.actionableErrorMessage ?? "未知错误")
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {

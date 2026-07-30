@@ -23,27 +23,32 @@ struct MetricPoint: Decodable, Sendable {
 
 extension MetricQueryResponse {
     func samples(for node: KomariNode) -> [HistoricalSample] {
-        var values: [Date: [String: Double]] = [:]
+        var values: [Int64: [String: (timestamp: Date, value: Double)]] = [:]
         for item in series where item.entityID == node.uuid {
             for point in item.points {
                 guard let date = point.time.komariDate, let value = point.value else { continue }
-                values[date, default: [:]][item.metricKey] = value
+                let second = Int64(date.timeIntervalSince1970.rounded(.down))
+                if let existing = values[second]?[item.metricKey],
+                   date < existing.timestamp || (date == existing.timestamp && value <= existing.value) {
+                    continue
+                }
+                values[second, default: [:]][item.metricKey] = (date, value)
             }
         }
-        return values.keys.sorted().map { date in
-            let item = values[date] ?? [:]
+        return values.keys.sorted().map { second in
+            let item = values[second]!
             return HistoricalSample(
-                time: date,
-                cpu: item["cpu.usage"],
-                load: item["load.average"],
-                memoryUsed: item["memory.used"].map(Int64.init),
+                time: Date(timeIntervalSince1970: TimeInterval(second)),
+                cpu: item["cpu.usage"]?.value,
+                load: item["load.average"]?.value,
+                memoryUsed: item["memory.used"]?.value.map(Int64.init),
                 memoryTotal: node.memTotal,
-                diskUsed: item["disk.used"].map(Int64.init),
+                diskUsed: item["disk.used"]?.value.map(Int64.init),
                 diskTotal: node.diskTotal,
-                networkIn: item["net.in.rate"].map(Int64.init),
-                networkOut: item["net.out.rate"].map(Int64.init),
-                connections: item["connections.tcp"].map(Int.init),
-                process: item["process.count"].map(Int.init)
+                networkIn: item["net.in.rate"]?.value.map(Int64.init),
+                networkOut: item["net.out.rate"]?.value.map(Int64.init),
+                connections: item["connections.tcp"]?.value.map(Int.init),
+                process: item["process.count"]?.value.map(Int.init)
             )
         }
     }

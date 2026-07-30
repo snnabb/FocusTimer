@@ -13,11 +13,16 @@ final class MonitorStore: ObservableObject {
     @Published var lastUpdated: Date?
     @Published var isRefreshing = false
     @Published var isShowingSetup = false
-    @Published var errorMessage: String?
+    @Published var actionableErrorMessage: String?
+    @Published private(set) var reconnectMessage: String?
+    @Published private(set) var consecutiveRefreshFailures = 0
     @Published var usingCachedData = false
     @Published var isConnected = false
 
     private var refreshTask: Task<Void, Never>?
+    private var pingRefreshTask: Task<Void, Never>?
+    private var lastFullRefreshAt: Date?
+    private var lastPingRefreshAt: Date?
 
     var sortedNodes: [KomariNode] {
         nodes.values.sorted {
@@ -39,6 +44,43 @@ final class MonitorStore: ObservableObject {
     private func average(_ keyPath: KeyPath<NodeStatus, Double?>) -> Double {
         let values = statuses.values.filter { $0.healthState == .online }.compactMap { $0[keyPath: keyPath] }
         return values.isEmpty ? 0 : values.reduce(0, +) / Double(values.count)
+    }
+    func recordRefreshSuccess() {
+        isConnected = true
+        reconnectMessage = nil
+        consecutiveRefreshFailures = 0
+    }
+
+    func recordRefreshFailure(_ error: Error) {
+        isConnected = false
+        consecutiveRefreshFailures += 1
+
+        if isActionableConfigurationError(error) {
+            actionableErrorMessage = error.localizedDescription
+            reconnectMessage = nil
+        } else {
+            actionableErrorMessage = nil
+            reconnectMessage = "连接中断，正在重连（第 \(consecutiveRefreshFailures) 次）"
+        }
+    }
+
+    private func isActionableConfigurationError(_ error: Error) -> Bool {
+        if error is KeychainError {
+            return true
+        }
+
+        guard let apiError = error as? KomariAPIError else {
+            return false
+        }
+
+        switch apiError {
+        case .invalidURL, .invalidAPIKey, .cloudflareChallenge, .invalidResponse:
+            return true
+        case .http(let status):
+            return status == 401 || status == 403
+        case .rpc:
+            return false
+        }
     }
 
     func bootstrap() async {
@@ -87,9 +129,11 @@ final class MonitorStore: ObservableObject {
         lastUpdated = updatedAt
         usingCachedData = false
         isConnected = true
+        recordRefreshSuccess()
         LocalStore.saveSnapshot(MonitorSnapshot(nodes: nodes, statuses: statuses, savedAt: updatedAt))
         isShowingSetup = false
-        await refreshPingSummaries()
+        lastFullRefreshAt = updatedAt
+        schedulePingSummariesIfNeeded()
         startAutoRefresh()
     }
 
@@ -108,27 +152,55 @@ final class MonitorStore: ObservableObject {
             async let fetchedNodes: [String: KomariNode] = client.call("common:getNodes")
             async let fetchedStatuses: [String: NodeStatus] = client.call("common:getNodesLatestStatus")
             async let fetchedTasks: [PingTask] = client.call("public:getPublicPingTasks")
-            let nextVersion = try await fetchedVersion
-            let nextInfo = try await fetchedInfo
-            let nextNodes = try await fetchedNodes
-            let nextStatuses = try await fetchedStatuses
-            let nextTasks = try await fetchedTasks
-            version = nextVersion
-            publicInfo = nextInfo
-            nodes = nextNodes
+            let result = try await (fetchedVersion, fetchedInfo, fetchedNodes, fetchedStatuses, fetchedTasks)
+            version = result.0
+            publicInfo = result.1
+            nodes = result.2
+            withAnimation(.easeInOut(duration: 0.3)) { statuses = result.3 }
+            pingTasks = result.4
+            let updatedAt = Date()
+            lastUpdated = updatedAt
+            lastFullRefreshAt = updatedAt
+            usingCachedData = false
+            recordRefreshSuccess()
+            LocalStore.saveSnapshot(MonitorSnapshot(nodes: nodes, statuses: statuses, savedAt: updatedAt))
+            schedulePingSummariesIfNeeded()
+        } catch {
+            usingCachedData = !nodes.isEmpty
+            recordRefreshFailure(error)
+        }
+    }
+
+    private func refreshStatuses() async {
+        guard let panel else { return }
+        do {
+            guard let apiKey = try KeychainStore.loadAPIKey(), !apiKey.isEmpty else {
+                isShowingSetup = true
+                throw KomariAPIError.invalidAPIKey
+            }
+            let client = try KomariAPIClient(panel: panel, apiKey: apiKey)
+            let nextStatuses: [String: NodeStatus] = try await client.call("common:getNodesLatestStatus")
             withAnimation(.easeInOut(duration: 0.3)) { statuses = nextStatuses }
-            pingTasks = nextTasks
             let updatedAt = Date()
             lastUpdated = updatedAt
             usingCachedData = false
-            isConnected = true
-            errorMessage = nil
+            recordRefreshSuccess()
             LocalStore.saveSnapshot(MonitorSnapshot(nodes: nodes, statuses: statuses, savedAt: updatedAt))
-            await refreshPingSummaries()
         } catch {
             usingCachedData = !nodes.isEmpty
-            isConnected = false
-            errorMessage = error.localizedDescription
+            recordRefreshFailure(error)
+        }
+    }
+
+    private func schedulePingSummariesIfNeeded() {
+        let now = Date()
+        guard lastPingRefreshAt.map({ now.timeIntervalSince($0) >= 30 }) ?? true,
+              pingRefreshTask == nil else { return }
+        lastPingRefreshAt = now
+        pingRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshPingSummaries()
+            self.pingRefreshTask = nil
         }
     }
 
@@ -161,14 +233,28 @@ final class MonitorStore: ObservableObject {
         return result.records(for: uuid)
     }
 
-    func compatibleHistory(for node: KomariNode, hours: Int) async throws -> [HistoricalSample] {
+    struct HistoryLoadResult: Sendable {
+        enum Source: String, Sendable {
+            case recentStatus = "近期状态"
+            case commonRecords = "历史记录"
+            case metricAPI = "指标 API"
+            case legacyRecords = "兼容记录"
+        }
+
+        let samples: [HistoricalSample]
+        let source: Source
+
+        var sampleCount: Int { samples.count }
+    }
+
+    func compatibleHistory(for node: KomariNode, hours: Int) async throws -> HistoryLoadResult {
         var failures: [String] = []
 
         if hours == 0 {
             do {
                 let records = try await recentHistory(for: node.uuid)
                 let samples = records.compactMap { HistoricalSample(status: $0, node: node) }
-                if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+                if !samples.isEmpty { return HistoryLoadResult(samples: samples.sorted { $0.time < $1.time }, source: .recentStatus) }
                 failures.append("近期 RPC 返回 0 条记录")
             } catch {
                 failures.append("近期 RPC：\(error.localizedDescription)")
@@ -179,7 +265,7 @@ final class MonitorStore: ObservableObject {
                 let client = try KomariAPIClient(panel: panel, apiKey: apiKey)
                 let response: LegacyRecentResponse = try await client.call("public:getClientRecentRecords", params: ["uuid": .string(node.uuid)])
                 let samples = response.records.compactMap { $0.sample(node: node) }
-                if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+                if !samples.isEmpty { return HistoryLoadResult(samples: samples.sorted { $0.time < $1.time }, source: .legacyRecords) }
                 failures.append("兼容近期 RPC 返回 0 条记录")
             } catch {
                 failures.append("兼容近期 RPC：\(error.localizedDescription)")
@@ -189,7 +275,7 @@ final class MonitorStore: ObservableObject {
         do {
             let records = try await history(for: node.uuid, hours: max(hours, 1))
             let samples = records.compactMap { HistoricalSample(status: $0, node: node) }
-            if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+            if !samples.isEmpty { return HistoryLoadResult(samples: samples.sorted { $0.time < $1.time }, source: .commonRecords) }
             failures.append("历史 RPC 返回 0 条记录")
         } catch {
             failures.append("历史 RPC：\(error.localizedDescription)")
@@ -205,7 +291,7 @@ final class MonitorStore: ObservableObject {
                 "max_points": .int(400)
             ])
             let samples = response.samples(for: node)
-            if !samples.isEmpty { return samples }
+            if !samples.isEmpty { return HistoryLoadResult(samples: samples, source: .metricAPI) }
             failures.append("指标历史 RPC 返回 0 条记录")
         } catch {
             failures.append("指标历史 RPC：\(error.localizedDescription)")
@@ -220,7 +306,7 @@ final class MonitorStore: ObservableObject {
                 "hours": .string(String(max(hours, 1)))
             ])
             let samples = response.records.compactMap { $0.sample(node: node) }
-            if !samples.isEmpty { return samples.sorted { $0.time < $1.time } }
+            if !samples.isEmpty { return HistoryLoadResult(samples: samples.sorted { $0.time < $1.time }, source: .legacyRecords) }
             failures.append("兼容历史 RPC 返回 0 条记录")
         } catch {
             failures.append("兼容历史 RPC：\(error.localizedDescription)")
@@ -284,7 +370,9 @@ final class MonitorStore: ObservableObject {
         version = nil
         publicInfo = nil
         lastUpdated = nil
-        errorMessage = nil
+        actionableErrorMessage = nil
+        reconnectMessage = nil
+        consecutiveRefreshFailures = 0
         isConnected = false
         isShowingSetup = true
     }
@@ -294,8 +382,14 @@ final class MonitorStore: ObservableObject {
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(5))
-                guard !Task.isCancelled else { return }
-                await self?.refresh()
+                guard !Task.isCancelled, let self else { return }
+                if let lastFullRefreshAt = self.lastFullRefreshAt,
+                   Date().timeIntervalSince(lastFullRefreshAt) < 30 {
+                    await self.refreshStatuses()
+                    self.schedulePingSummariesIfNeeded()
+                } else {
+                    await self.refresh()
+                }
             }
         }
     }
@@ -303,5 +397,8 @@ final class MonitorStore: ObservableObject {
     func stopAutoRefresh() {
         refreshTask?.cancel()
         refreshTask = nil
+        pingRefreshTask?.cancel()
+        pingRefreshTask = nil
     }
+
 }

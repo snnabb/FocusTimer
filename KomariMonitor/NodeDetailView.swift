@@ -5,6 +5,7 @@ struct NodeDetailView: View {
     @EnvironmentObject private var store: MonitorStore
     let node: KomariNode
     @State private var history: [HistoricalSample] = []
+    @State private var historyMetadata: MonitorStore.HistoryLoadResult?
     @State private var pingResponse: PingRecordsResponse?
     @State private var historyHours = 0
     @State private var loadingHistory = false
@@ -197,6 +198,11 @@ struct NodeDetailView: View {
                 ContentUnavailableView(store.publicInfo?.recordEnabled == false ? "Komari 未开启历史记录" : "暂无历史记录", systemImage: "chart.xyaxis.line")
                     .frame(minHeight: 180)
             } else {
+                if let historyMetadata {
+                    Text("\(historyMetadata.source.rawValue) · \(historyMetadata.sampleCount) 个点")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 InteractiveMetricChart(title: "CPU 与负载", samples: history, primaryName: "CPU", primaryUnit: "%", primaryColor: .cyan, primaryValue: { $0.cpu }, secondaryName: "Load", secondaryUnit: "", secondaryColor: .orange, secondaryValue: { $0.load }, selectedTime: $selectedHistoryTime)
                 InteractiveMetricChart(title: "内存与磁盘", samples: history, primaryName: "内存", primaryUnit: "%", primaryColor: .indigo, primaryValue: { percent($0.memoryUsed, total: $0.memoryTotal) }, secondaryName: "磁盘", secondaryUnit: "%", secondaryColor: .purple, secondaryValue: { percent($0.diskUsed, total: $0.diskTotal) }, selectedTime: $selectedHistoryTime)
                 InteractiveMetricChart(title: "网络速度", samples: history, primaryName: "下载", primaryUnit: " MB/s", primaryColor: .blue, primaryValue: { Double($0.networkIn ?? 0) / 1_048_576 }, secondaryName: "上传", secondaryUnit: " MB/s", secondaryColor: .purple, secondaryValue: { Double($0.networkOut ?? 0) / 1_048_576 }, selectedTime: $selectedHistoryTime)
@@ -281,11 +287,14 @@ struct NodeDetailView: View {
         historyError = nil
         defer { loadingHistory = false }
         do {
-            history = try await store.compatibleHistory(for: node, hours: historyHours)
+            let result = try await store.compatibleHistory(for: node, hours: historyHours)
+            history = result.samples
+            historyMetadata = result
             selectedHistoryTime = nil
         } catch {
             historyError = error.localizedDescription
             history = []
+            historyMetadata = nil
         }
     }
 
