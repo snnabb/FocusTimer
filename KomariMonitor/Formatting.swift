@@ -5,7 +5,11 @@ extension Int64 {
         ByteCountFormatter.string(fromByteCount: self, countStyle: .binary)
     }
 
-    var rateString: String { "\(byteString)/s" }
+    var zeroSafeByteString: String {
+        self == 0 ? "0 KB" : byteString
+    }
+
+    var rateString: String { self == 0 ? "0 KB/s" : "\(byteString)/s" }
 }
 
 extension Double {

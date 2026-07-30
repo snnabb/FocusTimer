@@ -85,7 +85,7 @@ struct LegacyRecord: Decodable, Sendable {
     }
 }
 
-private extension HistoricalSample {
+extension HistoricalSample {
     init(time: Date, cpu: Double?, load: Double?, memoryUsed: Int64?, memoryTotal: Int64?, diskUsed: Int64?, diskTotal: Int64?, networkIn: Int64?, networkOut: Int64?, connections: Int?, process: Int?) {
         self.time = time
         self.cpu = cpu

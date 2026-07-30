@@ -92,9 +92,9 @@ struct NodeDetailView: View {
             sectionHeader("当前资源", detail: "每 2 秒更新")
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 SummaryCard(title: "CPU", value: status?.cpu?.percentString ?? "—", icon: "cpu", tint: .cyan)
+                SummaryCard(title: "内存使用率", value: memoryPercentText, icon: "memorychip", tint: .indigo)
                 SummaryCard(title: "负载 1 / 5 / 15", value: loadText, icon: "waveform.path.ecg", tint: .orange)
-                SummaryCard(title: "下载", value: (status?.netIn ?? 0).rateString, icon: "arrow.down", tint: .blue)
-                SummaryCard(title: "上传", value: (status?.netOut ?? 0).rateString, icon: "arrow.up", tint: .purple)
+                SummaryCard(title: "实时网络", value: "↓ \((status?.netIn ?? 0).rateString)\n↑ \((status?.netOut ?? 0).rateString)", icon: "arrow.up.arrow.down", tint: .blue)
                 SummaryCard(title: "TCP / UDP", value: "\(status?.connections ?? 0) / \(status?.connectionsUDP ?? 0)", icon: "point.3.connected.trianglepath.dotted", tint: .green)
                 SummaryCard(title: "进程", value: status?.process.map(String.init) ?? "—", icon: "list.bullet.rectangle", tint: .indigo)
             }
@@ -102,7 +102,7 @@ struct NodeDetailView: View {
                 UsageBar(title: "内存", value: Double(ram) / Double(total) * 100, detail: "\(ram.byteString) / \(total.byteString)", tint: .indigo)
             }
             if let swap = status?.swap, let total = status?.swapTotal ?? node.swapTotal, total > 0 {
-                UsageBar(title: "Swap", value: Double(swap) / Double(total) * 100, detail: "\(swap.byteString) / \(total.byteString)", tint: .orange)
+                UsageBar(title: "Swap", value: Double(swap) / Double(total) * 100, detail: "\(swap.zeroSafeByteString) / \(total.byteString)", tint: .orange)
             }
             if let disk = status?.disk, let total = status?.diskTotal ?? node.diskTotal, total > 0 {
                 UsageBar(title: "磁盘", value: Double(disk) / Double(total) * 100, detail: "\(disk.byteString) / \(total.byteString)", tint: .purple)
@@ -197,10 +197,10 @@ struct NodeDetailView: View {
                 ContentUnavailableView(store.publicInfo?.recordEnabled == false ? "Komari 未开启历史记录" : "暂无历史记录", systemImage: "chart.xyaxis.line")
                     .frame(minHeight: 180)
             } else {
-                InteractiveMetricChart(title: "CPU 与负载", samples: history, primaryName: "CPU %", primaryColor: .cyan, primaryValue: { $0.cpu }, secondaryName: "Load", secondaryColor: .orange, secondaryValue: { $0.load }, selectedTime: $selectedHistoryTime)
-                InteractiveMetricChart(title: "内存与磁盘 %", samples: history, primaryName: "内存", primaryColor: .indigo, primaryValue: { percent($0.memoryUsed, total: $0.memoryTotal) }, secondaryName: "磁盘", secondaryColor: .purple, secondaryValue: { percent($0.diskUsed, total: $0.diskTotal) }, selectedTime: $selectedHistoryTime)
-                InteractiveMetricChart(title: "网络速度 MB/s", samples: history, primaryName: "下载", primaryColor: .blue, primaryValue: { Double($0.networkIn ?? 0) / 1_048_576 }, secondaryName: "上传", secondaryColor: .purple, secondaryValue: { Double($0.networkOut ?? 0) / 1_048_576 }, selectedTime: $selectedHistoryTime)
-                InteractiveMetricChart(title: "连接与进程", samples: history, primaryName: "TCP", primaryColor: .green, primaryValue: { Double($0.connections ?? 0) }, secondaryName: "进程", secondaryColor: .indigo, secondaryValue: { Double($0.process ?? 0) }, selectedTime: $selectedHistoryTime)
+                InteractiveMetricChart(title: "CPU 与负载", samples: history, primaryName: "CPU", primaryUnit: "%", primaryColor: .cyan, primaryValue: { $0.cpu }, secondaryName: "Load", secondaryUnit: "", secondaryColor: .orange, secondaryValue: { $0.load }, selectedTime: $selectedHistoryTime)
+                InteractiveMetricChart(title: "内存与磁盘", samples: history, primaryName: "内存", primaryUnit: "%", primaryColor: .indigo, primaryValue: { percent($0.memoryUsed, total: $0.memoryTotal) }, secondaryName: "磁盘", secondaryUnit: "%", secondaryColor: .purple, secondaryValue: { percent($0.diskUsed, total: $0.diskTotal) }, selectedTime: $selectedHistoryTime)
+                InteractiveMetricChart(title: "网络速度", samples: history, primaryName: "下载", primaryUnit: " MB/s", primaryColor: .blue, primaryValue: { Double($0.networkIn ?? 0) / 1_048_576 }, secondaryName: "上传", secondaryUnit: " MB/s", secondaryColor: .purple, secondaryValue: { Double($0.networkOut ?? 0) / 1_048_576 }, selectedTime: $selectedHistoryTime)
+                InteractiveMetricChart(title: "连接与进程", samples: history, primaryName: "TCP", primaryUnit: "", primaryColor: .green, primaryValue: { Double($0.connections ?? 0) }, secondaryName: "进程", secondaryUnit: "", secondaryColor: .indigo, secondaryValue: { Double($0.process ?? 0) }, selectedTime: $selectedHistoryTime)
             }
         }
     }
@@ -220,6 +220,11 @@ struct NodeDetailView: View {
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var memoryPercentText: String {
+        guard let used = status?.ram, let total = status?.ramTotal ?? node.memTotal, total > 0 else { return "—" }
+        return (Double(used) / Double(total) * 100).percentString
     }
 
     private var loadText: String {

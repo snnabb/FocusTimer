@@ -87,9 +87,14 @@ struct NodeCard: View {
                 VStack(alignment: .trailing, spacing: 3) {
                     StatusBadge(state: status?.healthState ?? .unknown)
                     if let ping {
-                        Text("\(Int(ping.latency.rounded())) ms")
+                        Text("平均 \(Int(ping.latency.rounded())) ms")
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(latencyColor(ping.latency))
+                        if let loss = ping.loss {
+                            Text("丢包率 \(String(format: "%.1f", loss))%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(loss > 0 ? .red : .secondary)
+                        }
                     }
                 }
             }

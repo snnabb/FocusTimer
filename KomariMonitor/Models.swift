@@ -137,11 +137,33 @@ struct RecentStatusResponse: Codable, Sendable {
     let records: [NodeStatus]
 }
 
-struct RecordsResponse: Codable, Sendable {
+struct RecordsResponse: Decodable, Sendable {
     let count: Int?
     let records: [NodeStatus]
+    let groupedRecords: [String: [NodeStatus]]
     let from: String?
     let to: String?
+
+    enum CodingKeys: String, CodingKey { case count, records, from, to }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        count = try container.decodeIfPresent(Int.self, forKey: .count)
+        from = try container.decodeIfPresent(String.self, forKey: .from)
+        to = try container.decodeIfPresent(String.self, forKey: .to)
+        if let list = try? container.decode([NodeStatus].self, forKey: .records) {
+            records = list
+            groupedRecords = [:]
+        } else {
+            let groups = try container.decode([String: [NodeStatus]].self, forKey: .records)
+            records = groups.values.flatMap { $0 }
+            groupedRecords = groups
+        }
+    }
+
+    func records(for uuid: String) -> [NodeStatus] {
+        groupedRecords[uuid] ?? records.filter { $0.client == uuid || $0.client.isEmpty }
+    }
 }
 
 struct PingTask: Codable, Identifiable, Hashable, Sendable {

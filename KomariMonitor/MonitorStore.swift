@@ -158,7 +158,7 @@ final class MonitorStore: ObservableObject {
             "load_type": .string("all"),
             "maxCount": .int(800)
         ])
-        return result.records
+        return result.records(for: uuid)
     }
 
     func compatibleHistory(for node: KomariNode, hours: Int) async throws -> [HistoricalSample] {
@@ -198,6 +198,22 @@ final class MonitorStore: ObservableObject {
         do {
             guard let panel, let apiKey = try KeychainStore.loadAPIKey() else { throw KomariAPIError.invalidAPIKey }
             let client = try KomariAPIClient(panel: panel, apiKey: apiKey)
+            let response: MetricQueryResponse = try await client.call("public:queryMetrics", params: [
+                "metric_keys": .strings(["cpu.usage", "load.average", "memory.used", "disk.used", "net.in.rate", "net.out.rate", "connections.tcp", "process.count"]),
+                "entity_id": .string(node.uuid),
+                "hours": .int(max(hours, 1)),
+                "max_points": .int(400)
+            ])
+            let samples = response.samples(for: node)
+            if !samples.isEmpty { return samples }
+            failures.append("指标历史 RPC 返回 0 条记录")
+        } catch {
+            failures.append("指标历史 RPC：\(error.localizedDescription)")
+        }
+
+        do {
+            guard let panel, let apiKey = try KeychainStore.loadAPIKey() else { throw KomariAPIError.invalidAPIKey }
+            let client = try KomariAPIClient(panel: panel, apiKey: apiKey)
             let response: LegacyRecentResponse = try await client.call("public:getRecordsByUUID", params: [
                 "uuid": .string(node.uuid),
                 "load_type": .string("all"),
@@ -225,7 +241,6 @@ final class MonitorStore: ObservableObject {
     func refreshPingSummaries() async {
         guard let panel, let apiKey = try? KeychainStore.loadAPIKey() else { return }
         guard let client = try? KomariAPIClient(panel: panel, apiKey: apiKey) else { return }
-        let taskNames = Dictionary(uniqueKeysWithValues: pingTasks.map { ($0.id, $0.name) })
         let nodeIDs = Array(nodes.keys)
         var summaries: [String: NodePingSummary] = [:]
         await withTaskGroup(of: (String, NodePingSummary?).self) { group in
@@ -235,12 +250,15 @@ final class MonitorStore: ObservableObject {
                         let response: PingRecordsResponse = try await client.call("public:getPingRecords", params: [
                             "uuid": .string(uuid), "hours": .string("1")
                         ])
-                        guard let latest = response.records.max(by: { ($0.time.komariDate ?? .distantPast) < ($1.time.komariDate ?? .distantPast) }) else {
-                            return (uuid, nil)
+                        let validRecords = response.records.filter { $0.value >= 0 }
+                        let latestByTask = Dictionary(grouping: validRecords, by: { $0.taskID ?? -1 }).compactMap { _, records in
+                            records.max(by: { ($0.time.komariDate ?? .distantPast) < ($1.time.komariDate ?? .distantPast) })
                         }
-                        let taskName = latest.taskID.flatMap { taskNames[$0] }
+                        guard !latestByTask.isEmpty else { return (uuid, nil) }
+                        let average = latestByTask.map(\.value).reduce(0, +) / Double(latestByTask.count)
+                        let latestTime = latestByTask.compactMap { $0.time.komariDate }.max()
                         let loss = response.basicInfo?.first(where: { $0.client == uuid })?.loss
-                        return (uuid, NodePingSummary(latency: latest.value, loss: loss, taskName: taskName, updatedAt: latest.time.komariDate))
+                        return (uuid, NodePingSummary(latency: average, loss: loss, taskName: nil, updatedAt: latestTime))
                     } catch {
                         return (uuid, nil)
                     }
