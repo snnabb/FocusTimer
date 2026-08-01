@@ -80,7 +80,7 @@ namespace FocusTimer
 
     internal sealed class TimerCanvas : Control
     {
-        private readonly System.Windows.Forms.Timer ticker = new System.Windows.Forms.Timer { Interval = 30 };
+        private readonly System.Windows.Forms.Timer ticker = new System.Windows.Forms.Timer { Interval = 16 };
         private TimerMode mode = TimerMode.Countdown;
         private TimerState state = TimerState.Ready;
         private long durationMilliseconds = 25 * 60 * 1000;
@@ -104,6 +104,7 @@ namespace FocusTimer
             BackColor = Colors.Window;
             Font = new Font("Microsoft YaHei UI", 10F);
             ticker.Tick += delegate { Invalidate(); CheckCompletion(); };
+            MouseDown += delegate { Focus(); };
             MouseUp += HandleMouseUp;
             KeyDown += HandleKeyDown;
         }
@@ -164,20 +165,26 @@ namespace FocusTimer
             int contentWidth = card.Width - Scale(72);
             string label = mode == TimerMode.Countdown ? "剩余时间" : "已专注";
             DrawLabel(g, label, ScaleF(10F), FontStyle.Regular, Colors.Secondary, new Rectangle(contentX, card.Y + Scale(28), contentWidth, Scale(28)), StringAlignment.Center);
+            int labelBottom = card.Y + Scale(56);
 
-            string time = mode == TimerMode.Countdown ? FormatCountdown(RemainingMilliseconds) : FormatStopwatch(CurrentElapsedMilliseconds);
-            int timeTop = card.Y + Scale(58);
-            int timeHeight = Math.Max(72, card.Height / 3);
-            var timeBounds = new Rectangle(card.X + Scale(22), timeTop, card.Width - Scale(44), timeHeight);
-            DrawFittedTime(g, time, timeBounds);
-
-            int statusTop = timeBounds.Bottom + Scale(8);
-            DrawLabel(g, StatusText(), ScaleF(9.5F), FontStyle.Regular, state == TimerState.Finished ? Colors.Danger : Colors.Secondary, new Rectangle(contentX, statusTop, contentWidth, Scale(27)), StringAlignment.Center);
+            int zoneTop = labelBottom + Scale(8);
+            int timeTop;
+            int timeHeight;
+            int statusTop;
 
             if (mode == TimerMode.Countdown)
             {
-                int trackY = Math.Min(card.Bottom - Scale(90), statusTop + Scale(42));
-                var track = new Rectangle(card.X + Scale(60), trackY, card.Width - Scale(120), Math.Max(5, Scale(7)));
+                int presetHeight = Math.Max(32, Scale(40));
+                int presetTop = card.Bottom - presetHeight - Scale(18);
+                int trackHeight = Math.Max(5, Scale(7));
+                int trackTop = presetTop - trackHeight - Scale(14);
+                int zoneBottom = trackTop - Scale(12);
+                int zone = Math.Max(40, zoneBottom - zoneTop);
+                timeHeight = Math.Max(48, (int)(zone * 0.64));
+                timeTop = zoneTop + Math.Max(0, (zone - timeHeight - Scale(26)) / 2);
+                statusTop = timeTop + timeHeight + Scale(6);
+
+                var track = new Rectangle(card.X + Scale(60), trackTop, card.Width - Scale(120), trackHeight);
                 Shape.Fill(g, track, Math.Max(3, Scale(4)), Colors.Soft);
                 float progress = durationMilliseconds == 0 ? 0 : 1F - (float)RemainingMilliseconds / durationMilliseconds;
                 if (progress > 0)
@@ -185,12 +192,23 @@ namespace FocusTimer
                     var fill = new Rectangle(track.X, track.Y, Math.Max(7, (int)(track.Width * Math.Min(1F, progress))), track.Height);
                     Shape.Fill(g, fill, Math.Max(3, Scale(4)), Colors.Accent);
                 }
-                DrawPresets(g, card, track.Bottom + Scale(18));
+                DrawPresets(g, card, presetTop);
             }
             else
             {
-                DrawLabel(g, "精确到百分之一秒", ScaleF(9F), FontStyle.Regular, Colors.Secondary, new Rectangle(contentX, card.Bottom - Scale(50), contentWidth, Scale(26)), StringAlignment.Center);
+                int hintTop = card.Bottom - Scale(50);
+                int zoneBottom = hintTop - Scale(10);
+                int zone = Math.Max(40, zoneBottom - zoneTop);
+                timeHeight = Math.Max(48, (int)(zone * 0.8));
+                timeTop = zoneTop + Math.Max(0, (zone - timeHeight) / 2);
+                statusTop = timeTop + timeHeight + Scale(6);
+                DrawLabel(g, "精确到百分之一秒", ScaleF(9F), FontStyle.Regular, Colors.Secondary, new Rectangle(contentX, hintTop, contentWidth, Scale(26)), StringAlignment.Center);
             }
+
+            string time = mode == TimerMode.Countdown ? FormatCountdown(RemainingMilliseconds) : FormatStopwatch(CurrentElapsedMilliseconds);
+            var timeBounds = new Rectangle(card.X + Scale(22), timeTop, card.Width - Scale(44), timeHeight);
+            DrawFittedTime(g, time, timeBounds);
+            DrawLabel(g, StatusText(), ScaleF(9.5F), FontStyle.Regular, state == TimerState.Finished ? Colors.Danger : Colors.Secondary, new Rectangle(contentX, statusTop, contentWidth, Scale(27)), StringAlignment.Center);
         }
 
         private void DrawPresets(Graphics g, Rectangle card, int y)
@@ -201,7 +219,6 @@ namespace FocusTimer
             int buttonHeight = Math.Max(32, Scale(40));
             int totalWidth = buttonWidth * buttonCount + gap * (buttonCount - 1);
             int x = card.X + (card.Width - totalWidth) / 2;
-            y = Math.Min(y, card.Bottom - buttonHeight - Scale(18));
             for (int i = 0; i < Presets.Length; i++)
             {
                 presetButtons[i] = new Rectangle(x + i * (buttonWidth + gap), y, buttonWidth, buttonHeight);
@@ -342,11 +359,16 @@ namespace FocusTimer
             return string.Format("{0:00}:{1:00}.{2:00}", milliseconds / 60000, milliseconds % 60000 / 1000, milliseconds % 1000 / 10);
         }
 
-        private static void DrawFittedTime(Graphics g, string value, Rectangle bounds)
+        private string cachedTimeText = "";
+        private Rectangle cachedTimeBounds;
+        private float cachedTimeSize = -1F;
+
+        private void DrawFittedTime(Graphics g, string value, Rectangle bounds)
         {
             float maximumSize = Math.Max(28F, Math.Min(96F, bounds.Height * 0.72F));
             float minimumSize = Math.Max(14F, bounds.Height * 0.18F);
             const float step = 1F;
+            bool useCache = cachedTimeText == value && cachedTimeBounds == bounds && cachedTimeSize > 0;
             using (var format = new StringFormat(StringFormat.GenericTypographic)
             {
                 Alignment = StringAlignment.Center,
@@ -355,19 +377,31 @@ namespace FocusTimer
             })
             using (var brush = new SolidBrush(Colors.Text))
             {
-                for (float size = maximumSize; size >= minimumSize; size -= step)
+                float size;
+                if (useCache)
                 {
-                    using (var font = new Font("Microsoft YaHei UI", size, FontStyle.Regular, GraphicsUnit.Point))
+                    size = cachedTimeSize;
+                }
+                else
+                {
+                    size = minimumSize;
+                    for (float candidate = maximumSize; candidate >= minimumSize; candidate -= step)
                     {
-                        SizeF measured = g.MeasureString(value, font, int.MaxValue, format);
-                        if (measured.Width > bounds.Width - 24 || measured.Height > bounds.Height - 16) continue;
-                        g.DrawString(value, font, brush, bounds, format);
-                        return;
+                        using (var probe = new Font("Microsoft YaHei UI", candidate, FontStyle.Regular, GraphicsUnit.Point))
+                        {
+                            SizeF measured = g.MeasureString(value, probe, int.MaxValue, format);
+                            if (measured.Width > bounds.Width - 24 || measured.Height > bounds.Height - 16) continue;
+                            size = candidate;
+                            break;
+                        }
                     }
+                    cachedTimeText = value;
+                    cachedTimeBounds = bounds;
+                    cachedTimeSize = size;
                 }
 
-                using (var fallback = new Font("Microsoft YaHei UI", minimumSize, FontStyle.Regular, GraphicsUnit.Point))
-                    g.DrawString(value, fallback, brush, bounds, format);
+                using (var font = new Font("Microsoft YaHei UI", size, FontStyle.Regular, GraphicsUnit.Point))
+                    g.DrawString(value, font, brush, bounds, format);
             }
         }
 
