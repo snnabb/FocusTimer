@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Media;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using MonotonicClock = System.Diagnostics.Stopwatch;
 
 namespace FocusTimer
 {
@@ -85,7 +87,7 @@ namespace FocusTimer
         private TimerState state = TimerState.Ready;
         private long durationMilliseconds = 25 * 60 * 1000;
         private long accumulatedMilliseconds;
-        private DateTime runStartedAt;
+        private long runStartedTimestamp;
         private bool pinned;
         private Rectangle countdownTab;
         private Rectangle stopwatchTab;
@@ -95,6 +97,11 @@ namespace FocusTimer
         private Rectangle customButton;
         private readonly Rectangle[] presetButtons = new Rectangle[3];
         private static readonly int[] Presets = { 5, 25, 45 };
+        private readonly Dictionary<(int HalfPoints, FontStyle Style), Font> fontCache = new Dictionary<(int HalfPoints, FontStyle Style), Font>();
+        private readonly StringFormat nearFormat = CreateLabelFormat(StringAlignment.Near);
+        private readonly StringFormat centerFormat = CreateLabelFormat(StringAlignment.Center);
+        private readonly StringFormat farFormat = CreateLabelFormat(StringAlignment.Far);
+        private readonly StringFormat fittedTimeFormat = CreateFittedTimeFormat();
 
         public TimerCanvas()
         {
@@ -102,11 +109,28 @@ namespace FocusTimer
             ResizeRedraw = true;
             TabStop = true;
             BackColor = Colors.Window;
-            Font = new Font("Microsoft YaHei UI", 10F);
             ticker.Tick += delegate { Invalidate(); CheckCompletion(); };
             MouseDown += delegate { Focus(); };
+            MouseMove += HandleMouseMove;
+            MouseLeave += delegate { Cursor = Cursors.Default; };
             MouseUp += HandleMouseUp;
             KeyDown += HandleKeyDown;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                ticker.Dispose();
+                foreach (Font font in fontCache.Values)
+                    font.Dispose();
+                fontCache.Clear();
+                nearFormat.Dispose();
+                centerFormat.Dispose();
+                farFormat.Dispose();
+                fittedTimeFormat.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -250,10 +274,29 @@ namespace FocusTimer
         private int Scale(int value) => Math.Max(1, (int)Math.Round(value * Math.Min(Width / 720F, Height / 640F)));
         private float ScaleF(float value) => Math.Max(8F, value * Math.Min(Width / 720F, Height / 640F));
 
+        private void HandleMouseMove(object? sender, MouseEventArgs e)
+        {
+            bool interactive = pinButton.Contains(e.Location)
+                || (state != TimerState.Running && state != TimerState.Paused && mode != TimerMode.Countdown && countdownTab.Contains(e.Location))
+                || (state != TimerState.Running && state != TimerState.Paused && mode != TimerMode.Stopwatch && stopwatchTab.Contains(e.Location))
+                || primaryButton.Contains(e.Location)
+                || (state != TimerState.Ready && secondaryButton.Contains(e.Location));
+
+            if (!interactive && mode == TimerMode.Countdown && state == TimerState.Ready)
+            {
+                interactive = customButton.Contains(e.Location);
+                for (int i = 0; !interactive && i < presetButtons.Length; i++)
+                    interactive = presetButtons[i].Contains(e.Location);
+            }
+
+            Cursor = interactive ? Cursors.Hand : Cursors.Default;
+        }
+
 
 
         private void HandleMouseUp(object? sender, MouseEventArgs e)
         {
+            if (e.Button != MouseButtons.Left) return;
             if (pinButton.Contains(e.Location)) { pinned = !pinned; if (FindForm() != null) FindForm()!.TopMost = pinned; Invalidate(); return; }
             if (countdownTab.Contains(e.Location)) { SwitchMode(TimerMode.Countdown); return; }
             if (stopwatchTab.Contains(e.Location)) { SwitchMode(TimerMode.Stopwatch); return; }
@@ -277,6 +320,7 @@ namespace FocusTimer
 
         private void SwitchMode(TimerMode next)
         {
+            if (next == mode || state == TimerState.Running || state == TimerState.Paused) return;
             ticker.Stop();
             mode = next;
             state = TimerState.Ready;
@@ -295,7 +339,8 @@ namespace FocusTimer
             else
             {
                 if (mode == TimerMode.Countdown && RemainingMilliseconds <= 0) accumulatedMilliseconds = 0;
-                runStartedAt = DateTime.UtcNow;
+                ticker.Interval = mode == TimerMode.Countdown ? 100 : 16;
+                runStartedTimestamp = MonotonicClock.GetTimestamp();
                 state = TimerState.Running;
                 ticker.Start();
             }
@@ -325,7 +370,7 @@ namespace FocusTimer
         {
             using (var dialog = new DurationDialog(durationMilliseconds / 1000))
             {
-                if (dialog.ShowDialog(FindForm()) != DialogResult.OK) return;
+                if (dialog.ShowDialog(FindForm()) != DialogResult.OK || dialog.TotalSeconds <= 0) return;
                 durationMilliseconds = dialog.TotalSeconds * 1000;
                 accumulatedMilliseconds = 0;
                 Invalidate();
@@ -333,7 +378,7 @@ namespace FocusTimer
         }
 
         private long CurrentElapsedMilliseconds => state == TimerState.Running
-            ? accumulatedMilliseconds + Math.Max(0, (long)(DateTime.UtcNow - runStartedAt).TotalMilliseconds)
+            ? accumulatedMilliseconds + Math.Max(0, (long)MonotonicClock.GetElapsedTime(runStartedTimestamp).TotalMilliseconds)
             : accumulatedMilliseconds;
         private long RemainingMilliseconds => Math.Max(0, durationMilliseconds - CurrentElapsedMilliseconds);
 
@@ -359,7 +404,7 @@ namespace FocusTimer
             return string.Format("{0:00}:{1:00}.{2:00}", milliseconds / 60000, milliseconds % 60000 / 1000, milliseconds % 1000 / 10);
         }
 
-        private string cachedTimeText = "";
+        private string cachedTimePattern = "";
         private Rectangle cachedTimeBounds;
         private float cachedTimeSize = -1F;
 
@@ -367,56 +412,107 @@ namespace FocusTimer
         {
             float maximumSize = Math.Max(28F, Math.Min(96F, bounds.Height * 0.72F));
             float minimumSize = Math.Max(14F, bounds.Height * 0.18F);
-            const float step = 1F;
-            bool useCache = cachedTimeText == value && cachedTimeBounds == bounds && cachedTimeSize > 0;
-            using (var format = new StringFormat(StringFormat.GenericTypographic)
+            bool useCache = HasSameTimePattern(value, cachedTimePattern) && cachedTimeBounds == bounds && cachedTimeSize > 0;
+            float size = cachedTimeSize;
+
+            if (!useCache)
+            {
+                string fitSample = CreateTimeFitSample(value);
+                size = minimumSize;
+                for (float candidate = maximumSize; candidate >= minimumSize; candidate -= 1F)
+                {
+                    using (var probe = new Font("Microsoft YaHei UI", candidate, FontStyle.Regular, GraphicsUnit.Point))
+                    {
+                        SizeF measured = g.MeasureString(fitSample, probe, int.MaxValue, fittedTimeFormat);
+                        if (measured.Width > bounds.Width - 24 || measured.Height > bounds.Height - 16) continue;
+                        size = candidate;
+                        break;
+                    }
+                }
+                cachedTimePattern = fitSample;
+                cachedTimeBounds = bounds;
+                cachedTimeSize = size;
+            }
+
+            using (var brush = new SolidBrush(Colors.Text))
+                g.DrawString(value, GetFont(size, FontStyle.Regular), brush, bounds, fittedTimeFormat);
+        }
+
+        private static bool HasSameTimePattern(string value, string pattern)
+        {
+            if (value.Length != pattern.Length) return false;
+            for (int i = 0; i < value.Length; i++)
+            {
+                char expected = char.IsDigit(value[i]) ? '8' : value[i];
+                if (pattern[i] != expected) return false;
+            }
+            return true;
+        }
+
+        private static string CreateTimeFitSample(string value)
+        {
+            char[] sample = value.ToCharArray();
+            for (int i = 0; i < sample.Length; i++)
+                if (char.IsDigit(sample[i])) sample[i] = '8';
+            return new string(sample);
+        }
+
+        private Font GetFont(float size, FontStyle style)
+        {
+            int halfPoints = Math.Max(1, (int)Math.Round(size * 2F));
+            var key = (halfPoints, style);
+            if (fontCache.TryGetValue(key, out Font? font)) return font;
+
+            if (fontCache.Count >= 96)
+            {
+                foreach (Font cached in fontCache.Values)
+                    cached.Dispose();
+                fontCache.Clear();
+            }
+
+            font = new Font("Microsoft YaHei UI", halfPoints / 2F, style, GraphicsUnit.Point);
+            fontCache.Add(key, font);
+            return font;
+        }
+
+        private static StringFormat CreateLabelFormat(StringAlignment alignment)
+        {
+            return new StringFormat
+            {
+                Alignment = alignment,
+                LineAlignment = StringAlignment.Center,
+                Trimming = StringTrimming.EllipsisCharacter,
+                FormatFlags = StringFormatFlags.NoWrap
+            };
+        }
+
+        private static StringFormat CreateFittedTimeFormat()
+        {
+            return new StringFormat(StringFormat.GenericTypographic)
             {
                 Alignment = StringAlignment.Center,
                 LineAlignment = StringAlignment.Center,
                 FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces
-            })
-            using (var brush = new SolidBrush(Colors.Text))
-            {
-                float size;
-                if (useCache)
-                {
-                    size = cachedTimeSize;
-                }
-                else
-                {
-                    size = minimumSize;
-                    for (float candidate = maximumSize; candidate >= minimumSize; candidate -= step)
-                    {
-                        using (var probe = new Font("Microsoft YaHei UI", candidate, FontStyle.Regular, GraphicsUnit.Point))
-                        {
-                            SizeF measured = g.MeasureString(value, probe, int.MaxValue, format);
-                            if (measured.Width > bounds.Width - 24 || measured.Height > bounds.Height - 16) continue;
-                            size = candidate;
-                            break;
-                        }
-                    }
-                    cachedTimeText = value;
-                    cachedTimeBounds = bounds;
-                    cachedTimeSize = size;
-                }
-
-                using (var font = new Font("Microsoft YaHei UI", size, FontStyle.Regular, GraphicsUnit.Point))
-                    g.DrawString(value, font, brush, bounds, format);
-            }
+            };
         }
 
-        private static void CircleIcon(Graphics g, Rectangle bounds, Color background, string value, Color foreground, float size)
+        private StringFormat GetLabelFormat(StringAlignment alignment)
+        {
+            if (alignment == StringAlignment.Near) return nearFormat;
+            if (alignment == StringAlignment.Far) return farFormat;
+            return centerFormat;
+        }
+
+        private void CircleIcon(Graphics g, Rectangle bounds, Color background, string value, Color foreground, float size)
         {
             using (var brush = new SolidBrush(background)) g.FillEllipse(brush, bounds);
             DrawLabel(g, value, size, FontStyle.Bold, foreground, bounds, StringAlignment.Center);
         }
 
-        private static void DrawLabel(Graphics g, string value, float size, FontStyle style, Color color, Rectangle bounds, StringAlignment alignment)
+        private void DrawLabel(Graphics g, string value, float size, FontStyle style, Color color, Rectangle bounds, StringAlignment alignment)
         {
-            using (var font = new Font("Microsoft YaHei UI", size, style, GraphicsUnit.Point))
             using (var brush = new SolidBrush(color))
-            using (var format = new StringFormat { Alignment = alignment, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter })
-                g.DrawString(value, font, brush, bounds, format);
+                g.DrawString(value, GetFont(size, style), brush, bounds, GetLabelFormat(alignment));
         }
     }
 
@@ -458,12 +554,21 @@ namespace FocusTimer
             MinimizeBox = false;
             BackColor = Colors.Window;
             Font = new Font("Microsoft YaHei UI", 10F);
-            hours = Input(totalSeconds / 3600, 0, 23, 24);
+            hours = Input(totalSeconds / 3600, 0, 99, 24);
             minutes = Input(totalSeconds % 3600 / 60, 0, 59, 136);
             seconds = Input(totalSeconds % 60, 0, 59, 248);
             Controls.AddRange(new Control[] { Label("小时", 24), Label("分钟", 136), Label("秒", 248), hours, minutes, seconds });
             var cancel = Button("取消", DialogResult.Cancel, 178, Colors.Soft, Colors.Text);
-            var confirm = Button("完成", DialogResult.OK, 272, Colors.Accent, Color.White);
+            var confirm = Button("完成", DialogResult.None, 272, Colors.Accent, Color.White);
+            confirm.Click += delegate
+            {
+                if (TotalSeconds > 0)
+                {
+                    DialogResult = DialogResult.OK;
+                    return;
+                }
+                MessageBox.Show(this, "计时时长必须大于 0 秒。", "Mori Timer", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
             Controls.AddRange(new Control[] { cancel, confirm });
             AcceptButton = confirm;
             CancelButton = cancel;

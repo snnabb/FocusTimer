@@ -9,8 +9,15 @@
     <AssemblyName>FocusTimer</AssemblyName>
     <RootNamespace>FocusTimer</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
+    <Product>Mori Timer</Product>
+    <Description>简约的 Windows 倒计时与正计时工具</Description>
+    <Authors>snnabb</Authors>
+    <Version>2.6.0</Version>
+    <AssemblyVersion>2.6.0.0</AssemblyVersion>
+    <FileVersion>2.6.0.0</FileVersion>
+    <InformationalVersion>2.6.0</InformationalVersion>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
-  <ItemGroup>
-    <Content Include="app.ico" />
-  </ItemGroup>
+
 </Project>
